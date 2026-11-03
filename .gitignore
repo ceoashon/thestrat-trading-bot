@@ -239,3 +239,10 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+
+### Execution bot (secrets and runtime files)
+config.toml
+bot_state.json
+bot_state.json.tmp
+bot.log*
+.last_test_bar

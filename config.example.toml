@@ -1,0 +1,52 @@
+# Copy this file to config.toml and fill it in. config.toml is git-ignored, so your passwords never get committed.
+# Passwords can also come from environment variables instead: TRADOVATE_USERNAME, TRADOVATE_PASSWORD, TRADOVATE_CID,
+# TRADOVATE_SEC, BOT_SECRET.
+
+[tradovate]
+env = "demo"              # "demo" or "live"
+username = ""             # your Tradovate login
+password = ""
+cid = 0                   # from the API key you create in Tradovate (Application Settings > API Access)
+sec = ""                  # the secret of that API key
+app_id = "StratBot"
+app_version = "1.0"
+account_name = ""         # blank = the first account on the login (for example DEMO123456)
+
+[instrument]
+symbol = "MNQZ6"          # the Tradovate contract. Change the month code at each quarterly roll (Z6 = Dec 2026, H7 = Mar 2027)
+tv_tickers = ["MNQ1!", "NQ1!"]   # the TradingView charts allowed to trade it (syminfo.ticker)
+timeframe = "5"           # the chart timeframe the alert runs on
+tick_size = 0.25
+point_value = 2.0         # dollars per point: MNQ 2, NQ 20, MES 5, ES 50
+
+[orders]
+qty = 1
+entry_offset_ticks = 1    # buy stop = setup candle high + 1 tick, sell stop = setup low - 1 tick (the first trade through)
+stop_buffer_ticks = 1     # stop and every trail step = 1 tick beyond the candle's low (long) or high (short)
+entry_type = "Stop"       # "Stop" fills at market on the break. "StopLimit" caps slippage at stop_limit_ticks but can miss fast breaks
+stop_limit_ticks = 4
+
+[risk]
+direction = "both"        # "both", "long" or "short"
+both_sides = true         # an inside bar can arm a long and a short at once (like the indicator). false = only the better ranked one
+max_trades_per_day = 3    # 0 = no limit
+max_daily_loss = 300.0    # dollars of realized loss that stop new entries for the day. 0 = off
+max_stop_ticks = 0        # skip setups with a wider stop (entry to stop). 0 = off
+min_stop_ticks = 0
+flatten_unknown_positions = true   # flatten a position on this contract the bot did not open. Do not trade it by hand while the bot runs
+
+[session]
+timezone = "America/New_York"
+start = "09:30"           # new entries only while the setup candle closes inside this window
+end = "11:30"
+flatten_at = "15:55"      # cancel everything and close the position. Remove the line to never flatten
+day_reset = "18:00"       # the futures day starts here (daily trade count and daily loss reset)
+
+[server]
+host = "127.0.0.1"        # cloudflared forwards to this
+port = 8080
+secret = "change-me"      # the same text as "Auto-Trader: Secret" in the indicator settings
+max_alert_age_s = 15      # an alert that arrives later than this after the candle closed does not arm (no chasing)
+dry_run = true            # true = log the orders only. Set false to send them to Tradovate
+state_file = "bot_state.json"
+log_file = "bot.log"
