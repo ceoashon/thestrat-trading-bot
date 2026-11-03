@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 
 from bot.broker import DryRunBroker
 from bot.config import load_config
 from bot.engine import Engine
+from bot.notify import Notifier
 from bot.server import make_server
 
 
@@ -26,18 +29,27 @@ def main() -> int:
         root.addHandler(h)
     log = logging.getLogger("bot")
 
+    notifier = Notifier(cfg.discord_webhook, cfg.heartbeat_url, prefix="[DRY RUN] " if cfg.dry_run else "")
     if cfg.dry_run:
         log.warning("DRY RUN: orders are only logged. Set dry_run = false in config.toml to send them to Tradovate.")
         broker = DryRunBroker()
     else:
         from bot.tradovate import TradovateBroker
         broker = TradovateBroker(cfg)
-        broker.connect()
+        try:
+            broker.connect()
+        except Exception as e:
+            notifier.send(f"❗ The bot could not connect to Tradovate: {e}")
+            time.sleep(5)  # give the message time to go out
+            raise
         if cfg.env == "live":
             log.warning("LIVE ACCOUNT: real money")
 
-    engine = Engine(cfg, broker, cfg.state_file)
+    engine = Engine(cfg, broker, cfg.state_file, notifier=notifier)
     engine.startup()
+    notifier.send(f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} x{cfg.qty}, {cfg.timeframe}m, "
+                  f"window {cfg.start:%H:%M}-{cfg.end:%H:%M} ET, flatten {cfg.flatten_at:%H:%M}" if cfg.flatten_at else
+                  f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} x{cfg.qty}")
     srv = make_server(cfg, engine)
     log.info("trading %s x%d on %sm candles, window %s-%s %s, listening on http://%s:%d/webhook", cfg.symbol, cfg.qty,
              cfg.timeframe, cfg.start.strftime("%H:%M"), cfg.end.strftime("%H:%M"), cfg.timezone, cfg.host, cfg.port)
@@ -45,6 +57,8 @@ def main() -> int:
         srv.serve_forever()
     except KeyboardInterrupt:
         log.info("stopped by keyboard. Orders already at Tradovate stay there.")
+        notifier.send("🔴 Bot stopped by hand. Orders already at Tradovate stay there.")
+        time.sleep(2)
     return 0
 
 

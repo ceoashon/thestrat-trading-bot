@@ -187,3 +187,12 @@ class TradovateBroker:
                 continue
             cash += (1 if f.get("action") == "Sell" else -1) * f["price"] * f["qty"]
         return cash * self.cfg.point_value
+
+    def fill_price(self, order_id):
+        try:
+            rows = self._call("GET", "/fill/deps", masterid=order_id) or []
+        except BrokerError as e:
+            log.warning("could not read the fills of order %s: %s", order_id, e)
+            return None
+        qty = sum(f["qty"] for f in rows if f.get("active", True))
+        return sum(f["price"] * f["qty"] for f in rows if f.get("active", True)) / qty if qty else None

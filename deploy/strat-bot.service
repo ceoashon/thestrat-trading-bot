@@ -1,0 +1,18 @@
+# systemd service for a Linux cloud server. Install:
+#   sudo cp deploy/strat-bot.service /etc/systemd/system/
+#   sudo systemctl enable --now strat-bot
+# Logs:  journalctl -u strat-bot -f   (and bot.log in the bot folder)
+[Unit]
+Description=TheStrat execution bot (TradingView -> Tradovate)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+WorkingDirectory=/home/bot/thestrat-trading-bot
+ExecStart=/home/bot/thestrat-trading-bot/.venv/bin/python run_bot.py --config config.toml
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

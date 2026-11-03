@@ -64,6 +64,9 @@ class FakeBroker:
     def realized_pnl_since(self, since_ms):
         return self.pnl
 
+    def fill_price(self, i):
+        return self.orders[i]["px"] if self.orders[i]["status"] == "Filled" else None
+
     # what the exchange does
     def fill(self, side):
         eid = next(i for i, o in self.orders.items() if o.get("side") == side and o["status"] == "Working")
@@ -77,6 +80,17 @@ class FakeBroker:
         self.pos = 0
 
 
+class FakeNotifier:
+    def __init__(self):
+        self.msgs: list[str] = []
+
+    def send(self, text):
+        self.msgs.append(text)
+
+    def ping(self):
+        pass
+
+
 def ms(h, m):
     return int(datetime(2026, 11, 3, h, m, tzinfo=NY).timestamp() * 1000)
 
@@ -86,7 +100,8 @@ class EngineTest(unittest.TestCase):
         self.cfg = Config(secret="x", start=dtime(9, 30), end=dtime(16, 0), max_trades_per_day=0)
         self.b = FakeBroker()
         self.now = ms(15, 25) / 1000
-        self.e = Engine(self.cfg, self.b, clock=lambda: self.now)
+        self.n = FakeNotifier()
+        self.e = Engine(self.cfg, self.b, clock=lambda: self.now, notifier=self.n)
 
     def bar(self, h_, m_, hi, lo, L=0, S=0, late=1.0):
         """The candle that opened at h_:m_ closes; the alert arrives `late` seconds after the close."""
@@ -122,6 +137,28 @@ class EngineTest(unittest.TestCase):
         self.bar(15, 50, 28500.0, 28440.0)
         self.assertIsNone(self.e.s["trade"])
         self.assertNotIn(("flatten",), self.b.calls)
+
+    def test_discord_messages_for_a_trade(self):
+        self.bar(10, 0, 28402.0, 28380.0, L=3)
+        self.b.fill("long")
+        self.bar(10, 5, 28440.0, 28395.0)
+        self.b.stop_out(self.e.s["trade"]["stop_id"])
+        self.b.pnl = 2 * (28394.75 - 28402.25)
+        self.bar(10, 10, 28400.0, 28380.0)
+        text = "\n".join(self.n.msgs)
+        self.assertIn("ARMED LONG", text)
+        self.assertIn("FILLED LONG", text)
+        self.assertIn("at 28402.25", text)
+        self.assertIn("Stop moved 28379.75 → 28394.75", text)
+        self.assertIn("CLOSED LONG", text)
+        self.assertIn("-7.50 pts = **-$15.00**", text)
+        self.assertIn("today -$15.00", text)
+
+    def test_skips_outside_the_window_are_quiet(self):
+        self.bar(8, 0, 100.0, 90.0, L=3)
+        self.assertEqual(self.n.msgs, [])
+        self.bar(10, 0, 100.0, 90.0, L=3, late=40)
+        self.assertIn("not taken", self.n.msgs[-1])
 
     def test_no_break_cancels_and_rearms(self):
         self.bar(10, 0, 100.0, 90.0, L=3)

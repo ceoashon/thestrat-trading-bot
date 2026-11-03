@@ -1,5 +1,5 @@
 """Loads config.toml. Secrets can also come from environment variables so they never sit in a file:
-TRADOVATE_USERNAME, TRADOVATE_PASSWORD, TRADOVATE_CID, TRADOVATE_SEC, BOT_SECRET."""
+TRADOVATE_USERNAME, TRADOVATE_PASSWORD, TRADOVATE_CID, TRADOVATE_SEC, BOT_SECRET, DISCORD_WEBHOOK."""
 from __future__ import annotations
 
 import os
@@ -60,6 +60,12 @@ class Config:
     dry_run: bool = True
     state_file: str = "bot_state.json"
     log_file: str = "bot.log"
+    # notifications
+    discord_webhook: str = ""
+    heartbeat_url: str = ""
+    notify_armed: bool = True
+    notify_cancels: bool = False
+    notify_trail: bool = True
 
 
 def load_config(path: str) -> Config:
@@ -71,6 +77,7 @@ def load_config(path: str) -> Config:
     rk = raw.get("risk", {})
     ss = raw.get("session", {})
     sv = raw.get("server", {})
+    nt = raw.get("notify", {})
     d = Config()
     c = Config(
         env=tv.get("env", d.env),
@@ -110,6 +117,11 @@ def load_config(path: str) -> Config:
         dry_run=bool(sv.get("dry_run", d.dry_run)),
         state_file=sv.get("state_file", d.state_file),
         log_file=sv.get("log_file", d.log_file),
+        discord_webhook=os.environ.get("DISCORD_WEBHOOK", nt.get("discord_webhook", d.discord_webhook)),
+        heartbeat_url=nt.get("heartbeat_url", d.heartbeat_url),
+        notify_armed=bool(nt.get("armed", d.notify_armed)),
+        notify_cancels=bool(nt.get("cancels", d.notify_cancels)),
+        notify_trail=bool(nt.get("trail", d.notify_trail)),
     )
     if c.env not in ("demo", "live"):
         raise ValueError("tradovate.env must be 'demo' or 'live'")

@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from .broker import LIVE_STATUSES, Broker, BrokerError
 from .config import Config
+from .notify import NullNotifier
 
 log = logging.getLogger("engine")
 
@@ -36,9 +37,10 @@ def _dir(side: str) -> int:
 
 
 class Engine:
-    def __init__(self, cfg: Config, broker: Broker, state_path: str | None = None, clock=None) -> None:
+    def __init__(self, cfg: Config, broker: Broker, state_path: str | None = None, clock=None, notifier=None) -> None:
         self.cfg = cfg
         self.b = broker
+        self.n = notifier or NullNotifier()
         self.path = state_path
         self.clock = clock or _time.time
         self.tz = ZoneInfo(cfg.timezone)
@@ -95,6 +97,22 @@ class Engine:
         if fa is None:
             return False
         return fa <= t < r if fa < r else (t >= fa or t < r)
+
+    def _usd(self, pts: float) -> str:
+        v = pts * self.cfg.point_value * self.cfg.qty
+        return f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
+
+    def _today_pnl(self) -> str:
+        try:
+            v = self.b.realized_pnl_since(int(self._day_start(self._now()).timestamp() * 1000))
+        except BrokerError:
+            return "n/a"
+        return f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
+
+    def _closed(self, side: str, entry: float, exit_px: float, how: str) -> None:
+        pts = (exit_px - entry) * _dir(side)
+        self.n.send(f"🏁 **CLOSED {side.upper()}** {self.cfg.symbol} ({how}) | entry {entry} → exit {exit_px} | "
+                    f"{pts:+.2f} pts = **{self._usd(pts)}** | today {self._today_pnl()}, {self.s['trades_today']} trade(s)")
 
     def _px(self, x: float) -> float:
         tk = self.cfg.tick_size
@@ -158,6 +176,8 @@ class Engine:
                 self.b.cancel(a["stop_id"])
                 del self.s["armed"][side]
                 log.info("CANCELED %s entry %s: the other side of the setup candle broke first", side, a["entry"])
+                if self.cfg.notify_cancels:
+                    self.n.send(f"✖️ Canceled {side} entry {a['entry']}: the other side of the setup candle broke first")
             else:
                 log.info("cancel %s refused (it may have filled), checked at the candle close", side)
             self._save()
@@ -175,6 +195,8 @@ class Engine:
                 if self.s["trade"] or self.b.net_position() != 0:
                     log.info("FLATTEN TIME %s: closing the position", self.cfg.flatten_at)
                     self._flat_all()
+                    self.n.send(f"🔚 Flatten time {self.cfg.flatten_at:%H:%M}: position closed at market, orders canceled | "
+                                f"today {self._today_pnl()}")
                 self.s["trade"] = None
                 self._save()
 
@@ -187,11 +209,16 @@ class Engine:
                 if self.b.cancel(a["entry_id"]):
                     self.b.cancel(a["stop_id"])
                     log.info("%s entry %s did not trigger, canceled", side, a["entry"])
+                    if self.cfg.notify_cancels:
+                        self.n.send(f"✖️ {side.capitalize()} entry {a['entry']} did not trigger, canceled")
                     continue
                 st = self.b.order_status(a["entry_id"])
             if st == "Filled":
+                a["fill"] = self.b.fill_price(a["entry_id"]) or a["entry"]
                 filled.append((side, a))
                 self.s["trades_today"] += 1
+                self.n.send(f"✅ **FILLED {side.upper()}** {self.cfg.symbol} x{self.cfg.qty} at {a['fill']} ({a.get('sig', '')}) | "
+                            f"stop {a['stop']} | trade {self.s['trades_today']} today")
                 log.info("FILLED %s at the break of %s (%s), trade %d today", side, a["entry"], a.get("sig", ""),
                          self.s["trades_today"])
             elif st not in ("Canceled", "Expired"):
@@ -205,31 +232,38 @@ class Engine:
         if tr is None:
             for side, a in filled:
                 if _dir(side) == want:
-                    tr = {k: a[k] for k in ("entry", "stop", "entry_id", "stop_id", "setup_t", "sig")}
+                    tr = {k: a[k] for k in ("entry", "stop", "entry_id", "stop_id", "setup_t", "sig", "fill")}
                     tr["side"] = side
                     log.info("IN TRADE %s from %s, stop %s", side, tr["entry"], tr["stop"])
             if filled and want == 0:
                 log.info("the entry filled and the stop was hit inside the same candle")
+                for side, a in filled:
+                    self._closed(side, a["fill"], self.b.fill_price(a["stop_id"]) or a["stop"], "stopped out in the entry candle")
         if tr is not None:
             if want == 0:
                 log.info("TRADE CLOSED %s: stopped out (last stop %s)", tr["side"], tr["stop"])
+                self._closed(tr["side"], tr.get("fill", tr["entry"]), self.b.fill_price(tr["stop_id"]) or tr["stop"], "stop hit")
                 tr = None
             elif want != _dir(tr["side"]) or abs(pos) > self.cfg.qty:
                 log.error("the position (%s) does not match the %s trade: flattening", pos, tr["side"])
                 self._flat_all()
+                self.n.send(f"⚠️ The position ({pos}) did not match the {tr['side']} trade, so the bot flattened it. Check Tradovate.")
                 tr = None
             else:
                 st = self.b.order_status(tr["stop_id"])
                 if st not in LIVE_STATUSES:
                     log.error("the position is open but its stop order is %s: flattening", st)
                     self._flat_all()
+                    self.n.send(f"⚠️ The position was open but its stop order was {st}, so the bot flattened it. Check Tradovate.")
                     tr = None
         elif want != 0:
             if self.cfg.flatten_unknown_positions:
                 log.error("position %s that the bot is not tracking: flattening", pos)
                 self._flat_all()
+                self.n.send(f"⚠️ Found a position ({pos}) the bot did not open on {self.cfg.symbol}, so it flattened it.")
             else:
                 log.error("position %s that the bot is not tracking: left alone (flatten_unknown_positions = false)", pos)
+                self.n.send(f"⚠️ Found a position ({pos}) the bot did not open on {self.cfg.symbol}. Left alone, it has no bot stop.")
         self.s["trade"] = tr
 
     def _trail(self, h: float, l: float) -> None:
@@ -240,9 +274,13 @@ class Engine:
             return
         if self.b.modify_stop(tr["stop_id"], self.cfg.qty, new):
             log.info("TRAIL %s stop %s -> %s", tr["side"], tr["stop"], new)
+            if self.cfg.notify_trail:
+                locked = (new - tr.get("fill", tr["entry"])) * _dir(tr["side"])
+                self.n.send(f"↗️ Stop moved {tr['stop']} → {new} | locks {locked:+.2f} pts ({self._usd(locked)})")
             tr["stop"] = new
         else:
             log.warning("could not move the stop to %s, it stays at %s", new, tr["stop"])
+            self.n.send(f"⚠️ Could not move the stop to {new}. It stays at {tr['stop']} at Tradovate.")
 
     def _block_reason(self, ev: dict, now: datetime) -> str:
         tc = int(ev.get("tc") or 0)
@@ -273,6 +311,8 @@ class Engine:
         why = self._block_reason(ev, now)
         if why:
             log.info("setup %s not armed: %s", "/".join(sides), why)
+            if not why.startswith(("outside the trading window", "after the flatten time")):
+                self.n.send(f"⏸️ {'/'.join(sides).capitalize()} setup not taken: {why}")
             return
         if len(sides) == 2 and not self.cfg.both_sides:
             rk = lambda s: RANK.index(sigs[s]) if sigs[s] in RANK else 99
@@ -294,12 +334,16 @@ class Engine:
                 eid, sid = self.b.place_entry(side, self.cfg.qty, entry, stop, limit)
             except BrokerError as e:
                 log.error("%s entry at %s not placed: %s", side, entry, e)
+                self.n.send(f"⚠️ {side.capitalize()} entry at {entry} was not placed: {e}")
                 continue
             name = ev.get("Ln" if d == 1 else "Sn", "") or str(sigs[side])
             self.s["armed"][side] = {"entry_id": eid, "stop_id": sid, "entry": entry, "stop": stop,
                                      "setup_t": int(ev["t"]), "sig": name}
             log.info("ARMED %s %s: %s stop at %s, protective stop %s (%d ticks risk)", side.upper(), name,
                      "buy" if d == 1 else "sell", entry, stop, risk_ticks)
+            if self.cfg.notify_armed:
+                self.n.send(f"📌 **ARMED {side.upper()}** {self.cfg.symbol} | {name} | {'buy' if d == 1 else 'sell'} stop {entry} | "
+                            f"stop loss {stop} ({risk_ticks} ticks, risk {self._usd(-abs(entry - stop))})")
 
     def _flat_all(self) -> None:
         try:

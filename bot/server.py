@@ -7,6 +7,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -34,6 +35,7 @@ def parse_alert(raw: bytes, secret: str) -> dict | None:
 
 def make_server(cfg: Config, engine: Engine) -> ThreadingHTTPServer:
     q: queue.Queue = queue.Queue()
+    last_err = [0.0]
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -75,8 +77,12 @@ def make_server(cfg: Config, engine: Engine) -> ThreadingHTTPServer:
                     engine.on_timer()
                 else:
                     engine.handle(ev)
-            except Exception:
+                engine.n.ping()
+            except Exception as e:
                 log.exception("error while handling %s", ev)
+                if time.time() - last_err[0] > 300:  # at most one error message every 5 minutes
+                    last_err[0] = time.time()
+                    engine.n.send(f"❗ Bot error: {type(e).__name__}: {e}. Check bot.log. Orders already at Tradovate stay there.")
 
     threading.Thread(target=worker, name="engine", daemon=True).start()
     return ThreadingHTTPServer((cfg.host, cfg.port), Handler)

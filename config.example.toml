@@ -39,7 +39,7 @@ flatten_unknown_positions = true   # flatten a position on this contract the bot
 timezone = "America/New_York"
 start = "09:30"           # new entries only while the setup candle closes inside this window
 end = "11:30"
-flatten_at = "15:55"      # cancel everything and close the position. Remove the line to never flatten
+flatten_at = "15:55"      # cancel everything and close the position. flatten_at = "" never flattens
 day_reset = "18:00"       # the futures day starts here (daily trade count and daily loss reset)
 
 [server]
@@ -50,3 +50,11 @@ max_alert_age_s = 15      # an alert that arrives later than this after the cand
 dry_run = true            # true = log the orders only. Set false to send them to Tradovate
 state_file = "bot_state.json"
 log_file = "bot.log"
+
+[notify]
+discord_webhook = ""      # Discord: channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL
+heartbeat_url = ""        # optional: a healthchecks.io ping URL. It alerts you if the bot stops pinging (bot or server down)
+armed = true              # message when a setup is armed (the stop entry is placed)
+cancels = false           # message when an entry is canceled (no break, or the other side broke first). Busy, off by default
+trail = true              # message at every stop move
+# Always sent: bot start, fills, closed trades with P&L, flatten time, skipped setups (limits, late alerts), errors.

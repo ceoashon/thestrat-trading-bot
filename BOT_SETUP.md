@@ -73,6 +73,49 @@ Recreate the alert every time you change an indicator setting (an alert keeps th
    **Run whether user is logged on or not**. Do the same for cloudflared (or install it as a service:
    `cloudflared service install`). Set Windows power to never sleep, and Windows Update active hours to cover your window.
 
+## 7. Discord notifications (5 min)
+1. In Discord, open the channel: **Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL**.
+2. Paste it into `config.toml` under `[notify]` as `discord_webhook`, and restart the bot. You get a "Bot started" message.
+
+What you get: 🟢 bot started, 📌 setup armed (entry, stop, risk in $), ✅ filled (real fill price), ↗️ stop moved
+(and how much it locks in), 🏁 trade closed (points, $ and today's P&L), 🔚 flatten time, ⏸️ setup not taken (daily
+limits, late alert), ⚠️ safety flattens or a stop that could not move, ❗ errors. Turn `armed`, `cancels` and `trail` on
+or off in `[notify]`.
+
+**Knowing when the bot is DOWN:** a stopped bot cannot send a message, so a free outside check does it. Make a check at
+healthchecks.io (period 1 minute, grace 5 minutes), connect its Discord integration to your channel, and paste the
+check's ping URL as `heartbeat_url`. The bot pings it every minute; if the pings stop, healthchecks.io posts to Discord.
+
+## 8. Run it in the cloud (no home computer needed)
+TradingView alerts already run on TradingView's servers. Put the bot on a small cloud server and the whole chain runs
+with your computer off: TradingView servers → cloud server → Tradovate.
+
+1. Rent the smallest Linux server (Ubuntu 24.04, 1 CPU, 1 GB RAM, about $5/month at DigitalOcean, Vultr, Linode or
+   Hetzner). Pick a US region (Chicago if offered, close to CME).
+2. Log in to it (the provider shows the command, like `ssh root@<server-ip>`) and run the setup script:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ceoashon/thestrat-trading-bot/main/deploy/setup_server.sh -o setup_server.sh && bash setup_server.sh
+   ```
+   If the repository is private, copy the folder up instead (`scp -r thestrat-trading-bot root@<server-ip>:/home/bot/`),
+   then run `bash /home/bot/thestrat-trading-bot/deploy/setup_server.sh`.
+3. Fill in `/home/bot/thestrat-trading-bot/config.toml` (`nano` works), then start the bot. It restarts on its own after a
+   crash or a reboot:
+   ```bash
+   systemctl enable --now strat-bot
+   ```
+4. The HTTPS address for TradingView. For a permanent one, use a Cloudflare named tunnel (needs a domain in a free
+   Cloudflare account): `cloudflared tunnel login`, `cloudflared tunnel create strat-bot`,
+   `cloudflared tunnel route dns strat-bot bot.<yourdomain>`, then run it as a service with
+   `cloudflared service install` after pointing its config at `http://localhost:8080`. Your webhook URL is
+   `https://bot.<yourdomain>/webhook`. To test today without a domain, the quick tunnel from step 4 works on the server too.
+5. Update the TradingView alert's webhook URL to the new address. Then **stop the bot on the K11**: two bots on one
+   account would both place orders.
+
+Watch it: `journalctl -u strat-bot -f`. Update it: `cd /home/bot/thestrat-trading-bot && sudo -u bot git pull && systemctl restart strat-bot`.
+
+**If the bot or the server goes down in the middle of a trade:** the entry's stop loss is already at Tradovate, so the
+position stays protected. It only stops trailing until the bot is back (the heartbeat tells you).
+
 ## Notes
 - `bot.log` has every alert, order, fill, trail and skip. `http://localhost:8080/health?key=<secret>` shows the state.
 - Do not trade the bot's contract by hand on the same account while it runs (it flattens positions it did not open,

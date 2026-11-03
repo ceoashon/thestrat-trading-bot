@@ -34,6 +34,9 @@ class Broker(Protocol):
 
     def realized_pnl_since(self, since_ms: int) -> float: ...
 
+    def fill_price(self, order_id: int) -> float | None:
+        """The average fill price of an order, or None when unknown."""
+
 
 class DryRunBroker:
     """Logs every order instead of sending it. Entries never fill, so the bot arms, cancels and re-arms."""
@@ -78,3 +81,6 @@ class DryRunBroker:
 
     def realized_pnl_since(self, since_ms):
         return 0.0
+
+    def fill_price(self, order_id):
+        return None
