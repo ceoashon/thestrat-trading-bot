@@ -1,6 +1,6 @@
 # TheStrat Execution Bot: setup
 
-TradingView (TheStrat Trader V2) → webhook → this bot on the GMK K11 → Tradovate (demo).
+TradingView (TheStrat Automation) → webhook → this bot on the GMK K11 → Tradovate (demo).
 
 **How it enters on the break:** when a setup candle closes, the bot puts a **buy stop 1 tick above its high** (or a sell
 stop 1 tick under its low) at Tradovate, with the **protective stop 1 tick beyond the other side** attached. The exchange
@@ -19,11 +19,29 @@ to that candle's low − 1 tick (long) or high + 1 tick (short), only in your fa
 | Flatten time (15:55 ET) | Cancels everything and closes the position |
 | Position without its stop, or a position the bot did not open | Flattens it |
 
-## 1. The indicator (5 min)
-1. Open TheStrat Trader V2 in the Pine editor. Paste all of `pine/autotrader_webhook.pine` right above the last line
-   `// ===== END OF SCRIPT =====`. Save.
-2. In the indicator settings, section **14. Auto-Trader Webhook**: switch **Send Bot Messages** ON and set a **Secret**
-   (any password, no quote marks).
+## 1. The indicator: TheStrat Automation (10 min)
+`pine/TheStratAutomation.pine` is a separate copy of TheStrat Trader V2, renamed **TheStrat Automation**. Every signal,
+filter, drawing and table works the same. Only the alerts are restructured for the bot. It stays an **indicator** (not a
+strategy), so alerts work the way you already use them.
+
+1. TradingView → **Pine Editor** → **Open → New blank indicator**. Select everything in the editor and delete it.
+2. Paste the whole content of `pine/TheStratAutomation.pine`. Click **Save** and name it `TheStrat Automation`.
+3. Click **Add to chart** on a **5 minute MNQ1! (or NQ1!) chart**. Your TheStrat Trader V2 stays as it is; you can keep
+   both on the chart or remove the old one.
+4. Open the indicator settings (double-click its name on the chart), section **13. Alerts: Bot and Manual**:
+   - **Alerts: Send To** = **Bot only** (the default).
+   - **Bot: Secret** = your own password, letters and numbers only. The bot's `config.toml` must have the same `secret`.
+5. Leave the other settings as you trade them. Two the bot assumes: **6. Stop Placement = Setup candle (C1)** and
+   **Stop Buffer = 1** (they are the defaults). Click **OK**.
+
+What it sends (section 14 of the script): at every candle close one message with the candle's high/low and the setups
+it arms for the next candle, using exactly the filters the chart uses (signals, continuity with the flip, broadening
+formation A+, Setups to Take, +FLIP, stop size, trading hours). During the next candle, a cancel message if the other
+side of the setup candle breaks first.
+
+**Check it before the bot exists (5 min):** open webhook.site in a browser; it shows a unique URL. Use that URL in the
+alert below, and use a throwaway secret for this test (webhook.site pages are public). Within 5 minutes you see a `bar`
+message at each candle close. After the test, change the secret and point the alert at the bot.
 
 ## 2. Tradovate API key (10 min)
 In Tradovate: **Application Settings → API Access → Generate API Key**. Write down the **cid** and **secret**. If the
@@ -59,9 +77,19 @@ changes each time cloudflared restarts; for a permanent one use a named Cloudfla
 free static domain.
 
 ## 5. The TradingView alert (2 min)
-On the **5 minute MNQ1! (or NQ1!) chart** with the indicator: **Create Alert → Condition: TheStrat Trader V2 → Any
-alert() function call → Expiration: open-ended → Notifications: Webhook URL** = your URL + `/webhook`.
-Recreate the alert every time you change an indicator setting (an alert keeps the settings it was made with).
+TradingView must have **real-time CME data** on your account (without it CME futures are 10 minutes late and the bot
+skips every setup as too old).
+
+On the 5 minute chart with TheStrat Automation: **Alert** (clock icon) → **Create alert**:
+- **Condition:** `TheStrat Automation` → **Any alert() function call** (not "Price", and not one of the named conditions).
+- **Expiration:** open-ended (or the longest your plan allows).
+- **Alert name:** for example `Strat bot MNQ 5m`. The message box is not used: the indicator writes the message.
+- **Notifications** tab: tick **Webhook URL** and paste your bot URL + `/webhook`. Untick notifications you do not want
+  (the messages are JSON, not readable text; your readable notifications come from the bot's Discord messages).
+- **Create.**
+
+Recreate the alert every time you change an indicator setting or the bot URL (an alert keeps the settings it was made
+with). Keep only one bot alert per chart and symbol.
 
 ## 6. Go live on demo
 1. Set `dry_run = false` in `config.toml` and restart the bot. The log should say `connected to Tradovate demo`.
@@ -121,7 +149,8 @@ position stays protected. It only stops trailing until the bot is back (the hear
 - Do not trade the bot's contract by hand on the same account while it runs (it flattens positions it did not open,
   see `flatten_unknown_positions`).
 - Roll `symbol` to the next contract month before expiry (MNQZ6 → MNQH7).
-- What the bot copies from the indicator: the setups, the continuity, broadening formation and "Setups to Take" filters
-  (all evaluated at the setup candle's close, as the setup-ahead label does). The bot's own settings decide the window,
-  size and daily limits. A "Setups to Take" choice that keeps only +FLIP setups is not applied before the trigger.
+- What the bot copies from the indicator: the setups and every filter (continuity with the flip, broadening formation,
+  Setups to Take with +FLIP, A+ Needs a Continuity FLIP, stop size, trading hours), all judged at the setup candle's
+  close. The bot's own settings decide the window, size, daily limits and the flatten time. The bot always trails to the
+  last closed candle (the indicator's Trail from entry); other Exit Styles only change what the chart draws.
 - Tests: `python -m unittest discover -s tests -v`
