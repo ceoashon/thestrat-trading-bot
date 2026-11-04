@@ -1,12 +1,14 @@
-# Handoff: TheStrat execution bot (continue on the GMK K11)
+# Handoff: TheStrat execution bot (set up the cloud server from my MacBook)
 
-Paste the prompt below into a new Claude Code session that runs on the K11 (Windows), opened in the folder where the
-bot should live (for example `C:\stratbot`).
+Paste the prompt below into a new Claude Code session that runs on my MacBook (Claude desktop app), opened in a folder
+such as `~/stratbot`.
 
 ---
 
-I'm building an automated futures trading bot and continuing the work on this computer (my GMK K11, Windows), which
-will run the bot 24/7. You can run commands here. Read everything below before doing anything.
+I'm building an automated futures trading bot. I decided to run it on a small **cloud server** (Ubuntu) so it trades
+24/7 with my laptop closed. This session runs on my **MacBook**, which I use only to set up and control the server over
+SSH. You can run commands on this Mac (including `ssh` and `scp` to the server). Read everything below before doing
+anything.
 
 ## The goal
 My TradingView indicator ("TheStrat Automation", a copy of my "TheStrat Trader V2") finds TheStrat setups (for example
@@ -19,26 +21,29 @@ trades automatically on my Tradovate **demo** account:
   only in the trade's favor, until it is hit.
 - If the next candle breaks the other side of the setup candle first, the entry is canceled. If it closes without
   the break, the entry is canceled.
-- Risk management and a trading window are set in the bot's config. Instrument: MNQ on demo (signals from the 5 minute
-  NQ1! chart).
+- Risk management and the trading window are set in the bot's config. Instrument: MNQ on demo (signals from the 5
+  minute NQ1! chart).
 
 ## Where the code is
 GitHub repo `ceoashon/thestrat-trading-bot`, branch **`claude/elegant-mccarthy-5r2psq`** (not merged to main yet).
-Clone that branch here if it is not already on this computer. Key files:
+Key files:
 - `pine/TheStratAutomation.pine` – the indicator (already installed on TradingView, working). Section 13: "Alerts: Send
   To" (Bot only) and "Bot: Secret". Section 14: the JSON bot messages (`bar` at every candle close with o/h/l/c and the
   armed setups `L`/`S`; `cancel` during the next candle).
 - `bot/` – the bot: `engine.py` (trade rules), `tradovate.py` (Tradovate REST client), `server.py` (webhook on
   `127.0.0.1:8080/webhook`), `notify.py` (Discord + heartbeat), `broker.py` (dry-run broker), `config.py`.
-- `run_bot.py` (start), `config.example.toml` (copy to `config.toml`, git-ignored, holds the passwords),
-  `tools/send_test.py` (fake alerts), `tests/test_engine.py` (17 tests), `start_bot.bat` (auto-restart loop),
-  `deploy/` (Linux cloud server files, for later), `BOT_SETUP.md` (the full setup guide).
+- `run_bot.py`, `config.example.toml` (copied to `config.toml` on the server, git-ignored, holds the passwords),
+  `tools/send_test.py` (fake alerts), `tests/test_engine.py` (17 tests).
+- `deploy/setup_server.sh` (one-time server setup: New York time zone, Python venv, tests, cloudflared, the
+  `strat-bot` and `strat-tunnel` systemd services, firewall with only SSH open; prints the tunnel address),
+  `deploy/strat-bot.service`, `deploy/strat-tunnel.service`.
+- `BOT_SETUP.md` – the full guide (section 8 is the cloud server).
 
 ## What is done
 - Phase 1 done: TheStrat Automation is on my 5 minute NQ1! chart with one alert ("Any alert() function call") pointed at
-  webhook.site. Messages arrive about 1 second after each candle close as JSON. The bot parses them (tested).
-- Bot code written and tested in the cloud: unit tests pass, dry-run end to end works (arm, cancel, both sides, cancel
-  unfilled at the next close), Discord sending works against a stand-in.
+  webhook.site. JSON messages arrive about 1 second after each candle close. The bot parses them (tested).
+- Bot code written and tested in a cloud session: unit tests pass, dry-run end to end works, Discord sending works
+  against a stand-in.
 
 ## Not verified yet
 - The Tradovate API calls have never run against Tradovate (no credentials were available). Endpoints used:
@@ -46,25 +51,35 @@ Clone that branch here if it is not already on this computer. Key files:
   `/order/item`, `/order/cancelorder`, `/order/modifyorder`, `/order/liquidateposition`, `/position/list`,
   `/order/list`, `/fill/list`, `/fill/deps`. The first demo run is the test; fix field names if Tradovate disagrees.
 - Unknown: whether Tradovate rejects a buy stop placed below the market (when the break already happened) or fills it.
-  Test on demo on purpose.
-- Tradovate API access may need the API Access add-on and a funded live account. My account's access is not confirmed.
+- Tradovate API access may need the API Access add-on and a funded live account. My access is not confirmed.
+- `deploy/setup_server.sh` has only been syntax-checked, never run on a real server.
+- A login from a data-center IP may make Tradovate ask for a captcha once (the bot stops and says so; I then log in on
+  the Tradovate website and restart it).
 
-## What to do now, in order (Phase 2)
-1. Check Python 3.11+ on this computer (`python --version`); install Python 3.12 if missing (with "Add to PATH").
-2. Get the repo branch onto this computer, then `pip install -r requirements-bot.txt`.
-3. Run the tests: `python -m unittest discover -s tests -v`.
-4. Help me create `config.toml` from `config.example.toml`: my new secret (I will type it; it must match the
-   indicator's "Bot: Secret"), `symbol = "MNQZ6"`, `point_value = 2.0`, `tv_tickers` includes `"NQ1!"`,
+## What to do now, in order
+1. On this Mac: check for an SSH key (`~/.ssh/id_ed25519.pub`); make one if missing (`ssh-keygen -t ed25519`) and show
+   me the public key to paste into the cloud provider.
+2. I rent the server (DigitalOcean, Vultr or Hetzner; Ubuntu 24.04; smallest size; US region, Chicago if offered) with
+   that key, and give you its IP address.
+3. Get the branch onto the Mac (`git clone -b claude/elegant-mccarthy-5r2psq https://github.com/ceoashon/thestrat-trading-bot.git`,
+   or I download the ZIP of that branch), then copy it up:
+   `scp -r <folder> root@SERVER_IP:/root/thestrat-trading-bot`.
+4. On the server: `useradd -m bot && mv /root/thestrat-trading-bot /home/bot/ && bash /home/bot/thestrat-trading-bot/deploy/setup_server.sh`.
+   Fix anything that fails. It prints the tunnel address.
+5. Help me fill in `/home/bot/thestrat-trading-bot/config.toml` on the server: my new secret (I will type it; it must
+   match the indicator's "Bot: Secret"), `symbol = "MNQZ6"`, `point_value = 2.0`, `tv_tickers` includes `"NQ1!"`,
    `dry_run = true`. For testing outside 09:30-11:30 ET, widen `start`/`end` temporarily and remind me to set them back.
-   Do not print my passwords back to me or commit config.toml.
-5. Start the bot (`python run_bot.py`), then send a fake setup with `tools/send_test.py` and confirm it logs ARMED.
-6. Install cloudflared (`winget install --id Cloudflare.cloudflared`), run `cloudflared tunnel --url
-   http://localhost:8080`, and give me the https address. I update the TradingView alert's webhook to that address +
-   `/webhook` and recreate the alert with the new secret. Confirm real `candle closed` lines appear every 5 minutes.
-7. When I have the Tradovate API key (cid and secret): fill in the Tradovate section, set `dry_run = false`, restart,
-   confirm "connected to Tradovate demo", and check the first armed setup shows up as working orders in Tradovate.
-8. Then: Discord webhook in `[notify]`, a Task Scheduler "At startup" task for `start_bot.bat` and for cloudflared,
-   Windows power never sleeps, Windows Update active hours over my trading window.
+   Do not print my passwords back to me, do not commit config.toml.
+6. `systemctl enable --now strat-bot`, then a fake setup with `tools/send_test.py` (run from the bot folder with the
+   venv python) and confirm `ARMED` in `journalctl -u strat-bot`.
+7. I set the TradingView alert's webhook to the tunnel address + `/webhook` and recreate the alert with the new secret.
+   Confirm real `candle closed` lines every 5 minutes.
+8. When I have the Tradovate API key (cid and secret): fill in the Tradovate section, set `dry_run = false`,
+   `systemctl restart strat-bot`, confirm "connected to Tradovate demo", and check the first armed setup shows up as
+   working orders in Tradovate.
+9. Then: Discord webhook in `[notify]`, a healthchecks.io heartbeat, and (later) a permanent address with a Cloudflare
+   named tunnel and a cheap domain.
 
-Rules: do not change the indicator's signal or filter logic. Ask before placing anything on a live (non-demo) account.
-Only one bot may run on the account at a time. Explain things simply; I am not a programmer.
+Rules: do not change the indicator's signal or filter logic. Ask before anything touches a live (non-demo) account.
+Only one bot may run on the account at a time (my GMK K11 is not running one). Explain things simply; I am not a
+programmer.

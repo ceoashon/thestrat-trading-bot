@@ -1,0 +1,16 @@
+# Cloudflare quick tunnel: gives the bot a public HTTPS address (https://<random>.trycloudflare.com) without opening
+# any port on the server. The address changes when this service restarts (for example after a reboot); see it with:
+#   journalctl -u strat-tunnel | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1
+# For a permanent address, use a Cloudflare named tunnel instead (BOT_SETUP.md, section 8).
+[Unit]
+Description=Cloudflare quick tunnel for the strat bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://localhost:8080
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

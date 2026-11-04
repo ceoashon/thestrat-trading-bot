@@ -116,30 +116,40 @@ check's ping URL as `heartbeat_url`. The bot pings it every minute; if the pings
 
 ## 8. Run it in the cloud (no home computer needed)
 TradingView alerts already run on TradingView's servers. Put the bot on a small cloud server and the whole chain runs
-with your computer off: TradingView servers → cloud server → Tradovate.
+with your computer off: TradingView servers → cloud server → Tradovate. Your Mac (or any computer) is only the remote
+control; `HANDOFF.md` is the prompt for a Claude Code session on the Mac that does these steps with you.
 
-1. Rent the smallest Linux server (Ubuntu 24.04, 1 CPU, 1 GB RAM, about $5/month at DigitalOcean, Vultr, Linode or
-   Hetzner). Pick a US region (Chicago if offered, close to CME).
-2. Log in to it (the provider shows the command, like `ssh root@<server-ip>`) and run the setup script:
+1. On the Mac, make an SSH key if you have none (`ssh-keygen -t ed25519`, Enter at every question) and copy the public
+   key (`cat ~/.ssh/id_ed25519.pub`).
+2. Rent the smallest Linux server (Ubuntu 24.04, 1 GB RAM, about $5/month at DigitalOcean, Vultr or Hetzner), US region
+   (Chicago if offered), with that SSH key. Note its IP address.
+3. Get this branch onto the Mac (GitHub → branch `claude/elegant-mccarthy-5r2psq` → Code → Download ZIP, unzip) and copy
+   it up (use your folder name and IP):
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ceoashon/thestrat-trading-bot/main/deploy/setup_server.sh -o setup_server.sh && bash setup_server.sh
+   scp -r ~/Downloads/thestrat-trading-bot-claude-elegant-mccarthy-5r2psq root@SERVER_IP:/root/thestrat-trading-bot
    ```
-   If the repository is private, copy the folder up instead (`scp -r thestrat-trading-bot root@<server-ip>:/home/bot/`),
-   then run `bash /home/bot/thestrat-trading-bot/deploy/setup_server.sh`.
-3. Fill in `/home/bot/thestrat-trading-bot/config.toml` (`nano` works), then start the bot. It restarts on its own after a
-   crash or a reboot:
+4. Log in (`ssh root@SERVER_IP`) and run the setup. It sets New York time, installs Python and cloudflared, runs the
+   tests, installs the `strat-bot` and `strat-tunnel` services, opens only SSH in the firewall, and prints the tunnel
+   address:
+   ```bash
+   useradd -m bot && mv /root/thestrat-trading-bot /home/bot/ && bash /home/bot/thestrat-trading-bot/deploy/setup_server.sh
+   ```
+5. Fill in `/home/bot/thestrat-trading-bot/config.toml` (`nano`, save with Ctrl+O, Enter, Ctrl+X), then start the bot.
+   It restarts on its own after a crash or a reboot:
    ```bash
    systemctl enable --now strat-bot
    ```
-4. The HTTPS address for TradingView. For a permanent one, use a Cloudflare named tunnel (needs a domain in a free
-   Cloudflare account): `cloudflared tunnel login`, `cloudflared tunnel create strat-bot`,
-   `cloudflared tunnel route dns strat-bot bot.<yourdomain>`, then run it as a service with
-   `cloudflared service install` after pointing its config at `http://localhost:8080`. Your webhook URL is
-   `https://bot.<yourdomain>/webhook`. To test today without a domain, the quick tunnel from step 4 works on the server too.
-5. Update the TradingView alert's webhook URL to the new address. Then **stop the bot on the K11**: two bots on one
-   account would both place orders.
+6. Point the TradingView alert's webhook at the tunnel address + `/webhook`. See the address again any time with:
+   ```bash
+   journalctl -u strat-tunnel | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1
+   ```
+   This quick address changes when the server reboots. For a permanent one, use a Cloudflare named tunnel (needs a
+   domain in a free Cloudflare account): `cloudflared tunnel login`, `cloudflared tunnel create strat-bot`,
+   `cloudflared tunnel route dns strat-bot bot.<yourdomain>`, point its config at `http://localhost:8080`, run it with
+   `cloudflared service install`, and stop the quick one (`systemctl disable --now strat-tunnel`).
+7. Make sure no other bot (for example on the K11) runs on the same account: two bots would both place orders.
 
-Watch it: `journalctl -u strat-bot -f`. Update it: `cd /home/bot/thestrat-trading-bot && sudo -u bot git pull && systemctl restart strat-bot`.
+Watch it: `journalctl -u strat-bot -f`. Update it: copy the new files up with `scp`, then `systemctl restart strat-bot`.
 
 **If the bot or the server goes down in the middle of a trade:** the entry's stop loss is already at Tradovate, so the
 position stays protected. It only stops trailing until the bot is back (the heartbeat tells you).
