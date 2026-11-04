@@ -22,7 +22,7 @@ import time as _time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .broker import LIVE_STATUSES, Broker, BrokerError
+from .broker import LIVE_STATUSES, Broker, BrokerError, PriceAlreadyPast
 from .config import Config
 from .notify import NullNotifier
 
@@ -306,6 +306,11 @@ class Engine:
 
     def _arm(self, ev: dict, now: datetime, h: float, l: float) -> None:
         sigs = {"long": int(ev.get("L") or 0), "short": int(ev.get("S") or 0)}
+        if self.cfg.setups:
+            for s in sigs:
+                if sigs[s] > 0 and sigs[s] not in self.cfg.setups:
+                    log.info("%s setup %d skipped: it is not in your setups list", s, sigs[s])
+                    sigs[s] = 0
         sides = [s for s in ("long", "short") if sigs[s] > 0 and self.cfg.direction in ("both", s)]
         if not sides:
             return
@@ -331,20 +336,54 @@ class Engine:
                 log.info("%s setup skipped: stop %d ticks is below the min %d", side, risk_ticks, self.cfg.min_stop_ticks)
                 continue
             limit = self._px(entry + d * self.cfg.stop_limit_ticks * tk) if self.cfg.entry_type == "StopLimit" else None
+            name = ev.get("Ln" if d == 1 else "Sn", "") or str(sigs[side])
+            late = False
             try:
                 eid, sid = self.b.place_entry(side, self.cfg.qty, entry, stop, limit)
+            except PriceAlreadyPast as e:
+                ids = self._enter_late(side, entry, stop, name, e)
+                if ids is None:
+                    continue
+                eid, sid = ids
+                late = True
             except BrokerError as e:
                 log.error("%s entry at %s not placed: %s", side, entry, e)
                 self.n.send(f"⚠️ {side.capitalize()} entry at {entry} was not placed: {e}")
                 continue
-            name = ev.get("Ln" if d == 1 else "Sn", "") or str(sigs[side])
             self.s["armed"][side] = {"entry_id": eid, "stop_id": sid, "entry": entry, "stop": stop,
                                      "setup_t": int(ev["t"]), "sig": name}
+            if late:
+                continue
             log.info("ARMED %s %s: %s stop at %s, protective stop %s (%d ticks risk)", side.upper(), name,
                      "buy" if d == 1 else "sell", entry, stop, risk_ticks)
             if self.cfg.notify_armed:
                 self.n.send(f"📌 **ARMED {side.upper()}** {self.cfg.symbol} | {name} | {'buy' if d == 1 else 'sell'} stop {entry} | "
                             f"stop loss {stop} ({risk_ticks} ticks, risk {self._usd(-abs(entry - stop))})")
+
+    def _enter_late(self, side: str, entry: float, stop: float, name: str, why: Exception) -> tuple[int, int] | None:
+        """The market passed the entry before the order arrived: try once, no further than late_entry_ticks past it."""
+        cap = self.cfg.late_entry_ticks
+        if cap <= 0:
+            log.error("%s entry at %s not placed: %s", side, entry, why)
+            self.n.send(f"⚠️ {side.capitalize()} entry at {entry} was not placed: {why}")
+            return None
+        limit = self._px(entry + _dir(side) * cap * self.cfg.tick_size)
+        try:
+            ids = self.b.place_late_entry(side, self.cfg.qty, limit, stop)
+        except BrokerError as e:
+            log.error("%s late entry at %s failed: %s", side, limit, e)
+            self.n.send(f"⚠️ {side.capitalize()} late entry at {limit} failed: {e}")
+            return None
+        if ids is None:
+            log.info("%s %s missed: the market was more than %d ticks past %s", side, name, cap, entry)
+            self.n.send(f"⏭️ {side.capitalize()} {name} missed: the market was more than {cap} ticks past {entry} when the order "
+                        f"arrived, so no trade")
+            return None
+        fill = self.b.fill_price(ids[0])
+        log.info("LATE ENTRY %s %s: the market had passed %s, filled at %s, protective stop %s", side.upper(), name, entry, fill, stop)
+        self.n.send(f"⚡ **LATE ENTRY {side.upper()}** {self.cfg.symbol} | {name} | the market had passed {entry} | filled at "
+                    f"{fill if fill is not None else 'unknown'} | stop loss {stop}")
+        return ids
 
     def _flat_all(self) -> None:
         try:

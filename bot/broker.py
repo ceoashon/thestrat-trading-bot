@@ -15,9 +15,17 @@ class BrokerError(Exception):
     pass
 
 
+class PriceAlreadyPast(BrokerError):
+    """The broker refused a stop entry because the market had already gone through its price."""
+
+
 class Broker(Protocol):
     def place_entry(self, side: str, qty: int, entry_px: float, stop_px: float, limit_px: float | None = None) -> tuple[int, int]:
         """Rests a stop entry with its protective stop attached (OSO). Returns (entry order id, stop order id)."""
+
+    def place_late_entry(self, side: str, qty: int, limit_px: float, stop_px: float) -> tuple[int, int] | None:
+        """One try to enter at limit_px or better, with the protective stop attached. Whatever cannot fill at once is
+        canceled. Returns (entry order id, stop order id), or None when nothing filled."""
 
     def order_status(self, order_id: int) -> str: ...
 
@@ -53,6 +61,11 @@ class DryRunBroker:
         log.info("[DRY RUN] %s %d %s %s%s, protective stop %s (ids %d/%d)", "BUY" if side == "long" else "SELL",
                  qty, "stop-limit" if limit_px else "stop", entry_px, f" limit {limit_px}" if limit_px else "", stop_px, eid, sid)
         return eid, sid
+
+    def place_late_entry(self, side, qty, limit_px, stop_px):
+        log.info("[DRY RUN] late entry %s %d limit %s, protective stop %s: not filled", "BUY" if side == "long" else "SELL",
+                 qty, limit_px, stop_px)
+        return None
 
     def order_status(self, order_id):
         return self.status.get(order_id, "Unknown")

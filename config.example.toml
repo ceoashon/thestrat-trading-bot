@@ -25,6 +25,7 @@ entry_offset_ticks = 1    # buy stop = setup candle high + 1 tick, sell stop = s
 stop_buffer_ticks = 1     # stop and every trail step = 1 tick beyond the candle's low (long) or high (short)
 entry_type = "Stop"       # "Stop" fills at market on the break. "StopLimit" caps slippage at stop_limit_ticks but can miss fast breaks
 stop_limit_ticks = 4
+late_entry_ticks = 10     # the market passed the entry before the order arrived: try once to enter, at most this many ticks past it. 0 = skip the trade
 
 [risk]
 direction = "both"        # "both", "long" or "short"
@@ -33,6 +34,7 @@ max_trades_per_day = 3    # 0 = no limit
 max_daily_loss = 300.0    # dollars of realized loss that stop new entries for the day. 0 = off
 max_stop_ticks = 0        # skip setups with a wider stop (entry to stop). 0 = off
 min_stop_ticks = 0
+setups = [1, 2, 3]        # the setups the bot may trade, by number. [] = every setup the indicator sends. 1 Failed 3-2-2, 2 Failed 1-2-2, 3 Failed 2-2. Outside bars: 11 1-3 Nirvana, 12 3-2 Continuation, 14 3-2 Reversal, 16 1-3-2 Reversal (turn them on in the indicator too)
 flatten_unknown_positions = true   # flatten a position on this contract the bot did not open. Do not trade it by hand while the bot runs
 
 [session]
@@ -46,7 +48,7 @@ day_reset = "18:00"       # the futures day starts here (daily trade count and d
 host = "127.0.0.1"        # cloudflared forwards to this
 port = 8080
 secret = "change-me"      # the same text as "Auto-Trader: Secret" in the indicator settings
-max_alert_age_s = 15      # an alert that arrives later than this after the candle closed does not arm (no chasing)
+max_alert_age_s = 25      # an alert that arrives later than this after the candle closed does not arm (late_entry_ticks limits the chasing)
 dry_run = true            # true = log the orders only. Set false to send them to Tradovate
 state_file = "bot_state.json"
 log_file = "bot.log"

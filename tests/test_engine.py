@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.broker import LIVE_STATUSES, BrokerError  # noqa: E402
+from bot.broker import LIVE_STATUSES, BrokerError, PriceAlreadyPast  # noqa: E402
 from bot.config import Config  # noqa: E402
 from bot.engine import Engine  # noqa: E402
 from bot.server import parse_alert  # noqa: E402
@@ -25,6 +25,7 @@ class FakeBroker:
         self.next = 1
         self.calls: list[tuple] = []
         self.pnl = 0.0
+        self.late_fills = True
 
     def place_entry(self, side, qty, entry_px, stop_px, limit_px=None):
         eid, sid = self.next, self.next + 1
@@ -32,6 +33,17 @@ class FakeBroker:
         self.orders[eid] = {"status": "Working", "px": entry_px, "side": side, "stop": sid}
         self.orders[sid] = {"status": "Suspended", "px": stop_px}
         self.calls.append(("place", side, entry_px, stop_px))
+        return eid, sid
+
+    def place_late_entry(self, side, qty, limit_px, stop_px):
+        self.calls.append(("late", side, limit_px, stop_px))
+        if not self.late_fills:
+            return None
+        eid, sid = self.next, self.next + 1
+        self.next += 2
+        self.orders[eid] = {"status": "Filled", "px": limit_px - 0.5 if side == "long" else limit_px + 0.5, "side": side, "stop": sid}
+        self.orders[sid] = {"status": "Working", "px": stop_px}
+        self.pos += 1 if side == "long" else -1
         return eid, sid
 
     def order_status(self, i):
@@ -252,6 +264,74 @@ class EngineTest(unittest.TestCase):
         self.b.place_entry = reject
         self.bar(10, 0, 100.0, 90.0, L=3)
         self.assertEqual(self.e.s["armed"], {})
+
+    def miss_the_break(self):
+        def rejected(*a, **k):
+            raise PriceAlreadyPast("rejected by Tradovate")
+        self.b.place_entry = rejected
+        self.cfg.late_entry_ticks = 10
+
+    def test_setups_list_keeps_only_those_setups(self):
+        self.cfg.setups = [1, 2, 3]
+        self.bar(10, 0, 100.0, 90.0, L=23)
+        self.assertEqual(self.e.s["armed"], {})
+        self.assertEqual(self.n.msgs, [])
+        self.bar(10, 5, 100.0, 90.0, L=3)
+        self.assertIsNotNone(self.armed("long"))
+
+    def test_setups_list_works_per_side(self):
+        self.cfg.setups = [3]
+        self.bar(10, 0, 100.0, 90.0, L=14, S=3)
+        self.assertIsNone(self.armed("long"))
+        self.assertIsNotNone(self.armed("short"))
+
+    def test_setups_list_can_take_outside_bars(self):
+        self.cfg.setups = [14]
+        self.bar(10, 0, 100.0, 90.0, L=14)
+        self.assertIsNotNone(self.armed("long"))
+
+    def test_empty_setups_list_takes_everything(self):
+        self.bar(10, 0, 100.0, 90.0, L=23)
+        self.assertIsNotNone(self.armed("long"))
+
+    def test_late_break_enters_within_the_cap(self):
+        self.miss_the_break()
+        self.bar(10, 0, 100.0, 90.0, L=3)
+        self.assertEqual(self.b.calls, [("late", "long", 102.75, 89.75)])
+        self.assertIn("LATE ENTRY LONG", self.n.msgs[-1])
+        self.bar(10, 5, 105.0, 101.0)
+        self.assertEqual(self.e.s["trades_today"], 1)
+        self.assertEqual(self.e.s["trade"]["side"], "long")
+        self.assertEqual(self.e.s["trade"]["stop"], 100.75)
+
+    def test_late_break_short_caps_below_the_entry(self):
+        self.miss_the_break()
+        self.bar(10, 0, 100.0, 90.0, S=3)
+        self.assertEqual(self.b.calls, [("late", "short", 87.25, 100.25)])
+
+    def test_late_break_too_far_is_no_trade(self):
+        self.miss_the_break()
+        self.b.late_fills = False
+        self.bar(10, 0, 100.0, 90.0, L=3)
+        self.assertEqual(self.e.s["armed"], {})
+        self.assertIn("missed", self.n.msgs[-1])
+        self.assertEqual(self.e.s["trades_today"], 0)
+
+    def test_late_break_off_only_reports(self):
+        self.miss_the_break()
+        self.cfg.late_entry_ticks = 0
+        self.bar(10, 0, 100.0, 90.0, L=3)
+        self.assertEqual(self.b.calls, [])
+        self.assertIn("was not placed", self.n.msgs[-1])
+
+    def test_other_rejections_do_not_enter_late(self):
+        def rejected(*a, **k):
+            raise BrokerError("rejected by Tradovate. InsufficientFunds")
+        self.b.place_entry = rejected
+        self.cfg.late_entry_ticks = 10
+        self.bar(10, 0, 100.0, 90.0, L=3)
+        self.assertEqual(self.b.calls, [])
+        self.assertIn("was not placed", self.n.msgs[-1])
 
     def test_rejection_after_arming_is_reported(self):
         self.bar(10, 0, 100.0, 90.0, L=3)

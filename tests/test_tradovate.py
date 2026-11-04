@@ -9,25 +9,27 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot import tradovate  # noqa: E402
-from bot.broker import BrokerError  # noqa: E402
+from bot.broker import BrokerError, PriceAlreadyPast  # noqa: E402
 from bot.config import Config  # noqa: E402
 from bot.tradovate import TradovateBroker  # noqa: E402
 
 
 class FakeTradovate(TradovateBroker):
-    def __init__(self, status="Working", reports=None, status_error=False):
+    def __init__(self, status="Working", reports=None, status_error=False, stop_status="Suspended"):
         self.cfg = Config(secret="x")
+        self.stop_status, self.flattened, self.sent = stop_status, False, None
         self.account_spec, self.account_id = "DEMO", 1
         self.status, self.reports, self.status_error = status, reports or [], status_error
         self.canceled = []
 
     def _call(self, method, path, body=None, retry=True, **params):
         if path == "/order/placeoso":
+            self.sent = body
             return {"orderId": 10, "oso1Id": 11}
         if path == "/order/item":
             if self.status_error:
                 raise BrokerError("no answer")
-            return {"ordStatus": self.status}
+            return {"ordStatus": self.stop_status if params.get("id") == 11 else self.status}
         if path == "/commandReport/deps":
             return self.reports
         if path == "/order/cancelorder":
@@ -35,8 +37,12 @@ class FakeTradovate(TradovateBroker):
             return {}
         raise AssertionError(path)
 
+    def flatten(self):
+        self.flattened = True
+
 
 @mock.patch.object(tradovate, "REJECT_CHECK_S", 0)
+@mock.patch.object(tradovate, "LATE_POLL_S", 0)
 class PlaceEntryTest(unittest.TestCase):
     def place(self, b):
         return b.place_entry("long", 1, 100.0, 90.0)
@@ -50,6 +56,7 @@ class PlaceEntryTest(unittest.TestCase):
                                        {"rejectReason": "InvalidPrice", "text": "Please check the order price."}])
         with self.assertRaises(BrokerError) as e:
             self.place(b)
+        self.assertIsInstance(e.exception, PriceAlreadyPast)
         self.assertIn("already passed", str(e.exception))
         self.assertIn("InvalidPrice, Please check the order price.", str(e.exception))
         self.assertEqual(b.canceled, [11])
@@ -60,6 +67,51 @@ class PlaceEntryTest(unittest.TestCase):
 
     def test_a_failed_check_keeps_tracking_the_order(self):
         self.assertEqual(self.place(FakeTradovate(status_error=True)), (10, 11))
+
+    def test_other_rejections_are_not_a_passed_price(self):
+        b = FakeTradovate("Rejected", [{"rejectReason": "InsufficientFunds", "text": "No margin."}])
+        with self.assertRaises(BrokerError) as e:
+            self.place(b)
+        self.assertNotIsInstance(e.exception, PriceAlreadyPast)
+
+    def late(self, b, side="long", limit=102.5, stop=90.0):
+        return b.place_late_entry(side, 1, limit, stop)
+
+    def test_late_entry_is_a_limit_that_cannot_rest(self):
+        b = FakeTradovate("Filled", stop_status="Working")
+        self.assertEqual(self.late(b), (10, 11))
+        self.assertEqual((b.sent["orderType"], b.sent["timeInForce"], b.sent["price"]), ("Limit", "IOC", 102.5))
+        self.assertEqual((b.sent["action"], b.sent["bracket1"]["action"], b.sent["bracket1"]["stopPrice"]), ("Buy", "Sell", 90.0))
+
+    def test_late_entry_short_sends_the_opposite_sides(self):
+        b = FakeTradovate("Filled", stop_status="Working")
+        self.late(b, "short", 87.5, 100.0)
+        self.assertEqual((b.sent["action"], b.sent["bracket1"]["action"]), ("Sell", "Buy"))
+
+    def test_late_entry_not_filled_returns_nothing(self):
+        b = FakeTradovate("Canceled")
+        self.assertIsNone(self.late(b))
+        self.assertEqual(b.canceled, [11])
+
+    def test_late_entry_stuck_on_the_book_is_canceled(self):
+        b = FakeTradovate("Working")
+        self.assertIsNone(self.late(b))
+        self.assertEqual(b.canceled, [10, 11])
+
+    def test_late_entry_rejected_raises(self):
+        b = FakeTradovate("Rejected", [{"rejectReason": "InvalidPrice", "text": "No."}])
+        with self.assertRaisesRegex(BrokerError, "late entry rejected"):
+            self.late(b)
+        self.assertEqual(b.canceled, [11])
+
+    def test_late_entry_filled_without_a_stop_is_closed(self):
+        b = FakeTradovate("Filled", stop_status="Rejected")
+        with self.assertRaisesRegex(BrokerError, "position was closed"):
+            self.late(b)
+        self.assertTrue(b.flattened)
+
+    def test_late_entry_unreadable_stays_tracked(self):
+        self.assertEqual(self.late(FakeTradovate(status_error=True)), (10, 11))
 
 
 if __name__ == "__main__":

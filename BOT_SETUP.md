@@ -107,7 +107,8 @@ with). Keep only one bot alert per chart and symbol.
 
 What you get: 🟢 bot started, 📌 setup armed (entry, stop, risk in $), ✅ filled (real fill price), ↗️ stop moved
 (and how much it locks in), 🏁 trade closed (points, $ and today's P&L), 🔚 flatten time, ⏸️ setup not taken (daily
-limits, late alert), ⚠️ safety flattens or a stop that could not move, ❗ errors. Turn `armed`, `cancels` and `trail` on
+limits, late alert), ⚡ late entry (the market passed the entry first, filled within `late_entry_ticks`), ⏭️ missed (it
+was further away than that, so no trade), ⚠️ safety flattens or a stop that could not move, ❗ errors. Turn `armed`, `cancels` and `trail` on
 or off in `[notify]`.
 
 **Knowing when the bot is DOWN:** a stopped bot cannot send a message, so a free outside check does it. Make a check at

@@ -38,9 +38,11 @@ class Config:
     stop_buffer_ticks: int = 1
     entry_type: str = "Stop"
     stop_limit_ticks: int = 4
+    late_entry_ticks: int = 0
     # risk
     direction: str = "both"
     both_sides: bool = True
+    setups: list[int] = field(default_factory=list)
     max_trades_per_day: int = 3
     max_daily_loss: float = 0.0
     max_stop_ticks: int = 0
@@ -98,8 +100,10 @@ def load_config(path: str) -> Config:
         stop_buffer_ticks=int(od.get("stop_buffer_ticks", d.stop_buffer_ticks)),
         entry_type=od.get("entry_type", d.entry_type),
         stop_limit_ticks=int(od.get("stop_limit_ticks", d.stop_limit_ticks)),
+        late_entry_ticks=int(od.get("late_entry_ticks", d.late_entry_ticks)),
         direction=rk.get("direction", d.direction),
         both_sides=bool(rk.get("both_sides", d.both_sides)),
+        setups=[int(x) for x in rk.get("setups", d.setups)],
         max_trades_per_day=int(rk.get("max_trades_per_day", d.max_trades_per_day)),
         max_daily_loss=float(rk.get("max_daily_loss", d.max_daily_loss)),
         max_stop_ticks=int(rk.get("max_stop_ticks", d.max_stop_ticks)),

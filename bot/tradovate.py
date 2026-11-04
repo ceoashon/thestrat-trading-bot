@@ -9,7 +9,7 @@ from datetime import datetime
 
 import requests
 
-from .broker import LIVE_STATUSES, BrokerError
+from .broker import LIVE_STATUSES, BrokerError, PriceAlreadyPast
 from .config import Config
 
 log = logging.getLogger("tradovate")
@@ -17,6 +17,9 @@ log = logging.getLogger("tradovate")
 URLS = {"demo": "https://demo.tradovateapi.com/v1", "live": "https://live.tradovateapi.com/v1"}
 # Tradovate accepts an order first and can reject it a moment later, so place_entry waits this long and looks again.
 REJECT_CHECK_S = 0.5
+# How long place_late_entry waits for its order to fill or be canceled.
+LATE_POLL_S = 0.25
+LATE_POLLS = 8
 
 
 def _ts(s: str) -> float:
@@ -150,7 +153,60 @@ class TradovateBroker:
         if status != "Rejected":
             return
         self.cancel(stop_id)
-        raise BrokerError(f"rejected by Tradovate. {self._reject_reason(order_id)}")
+        reason = self._reject_reason(order_id)
+        raise (PriceAlreadyPast if "InvalidPrice" in reason else BrokerError)(f"rejected by Tradovate. {reason}")
+
+    def place_late_entry(self, side, qty, limit_px, stop_px):
+        buy = side == "long"
+        body = {
+            "accountSpec": self.account_spec, "accountId": self.account_id, "action": "Buy" if buy else "Sell",
+            "symbol": self.cfg.symbol, "orderQty": qty, "orderType": "Limit", "price": limit_px, "timeInForce": "IOC",
+            "isAutomated": True,
+            "bracket1": {"action": "Sell" if buy else "Buy", "orderType": "Stop", "stopPrice": stop_px, "timeInForce": "GTC"},
+        }
+        d = self._call("POST", "/order/placeoso", body, retry=False) or {}
+        if d.get("failureReason") or "orderId" not in d:
+            raise BrokerError(f"late entry rejected: {d.get('failureReason')} {d.get('failureText', '')}".strip())
+        order_id, stop_id = d["orderId"], d.get("oso1Id")
+        status = self._settled_status(order_id)
+        if status in LIVE_STATUSES:
+            # an IOC order should never stay on the book, so make sure it does not
+            if self.cancel(order_id):
+                status = "Canceled"
+            else:
+                status = self._settled_status(order_id)
+        if status == "Unknown":
+            # it may have filled, so the next candle must still check it
+            log.warning("could not read late entry %s, the next candle checks it", order_id)
+            if stop_id:
+                return order_id, stop_id
+            raise BrokerError(f"could not read late entry {order_id}, and it has no stop. Check Tradovate")
+        if status != "Filled":
+            if stop_id:
+                self.cancel(stop_id)
+            if status == "Rejected":
+                raise BrokerError(f"late entry rejected by Tradovate. {self._reject_reason(order_id)}")
+            return None
+        # filled: never stay in a position without its stop
+        time.sleep(REJECT_CHECK_S)
+        stop_status = self.order_status(stop_id) if stop_id else "missing"
+        if stop_status not in LIVE_STATUSES:
+            self.flatten()
+            raise BrokerError(f"the late entry filled but its stop was {stop_status}, so the position was closed")
+        return order_id, stop_id
+
+    def _settled_status(self, order_id):
+        status = "Unknown"
+        for _ in range(LATE_POLLS):
+            try:
+                status = self.order_status(order_id)
+            except BrokerError as e:
+                log.warning("could not read order %s: %s", order_id, e)
+                status = "Unknown"
+            if status not in LIVE_STATUSES and status != "Unknown":
+                break
+            time.sleep(LATE_POLL_S)
+        return status
 
     def _reject_reason(self, order_id):
         try:
