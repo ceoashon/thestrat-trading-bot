@@ -25,7 +25,7 @@ trades automatically on my Tradovate **demo** account:
   minute NQ1! chart).
 
 ## Where the code is
-GitHub repo `ceoashon/thestrat-trading-bot`, branch **`claude/elegant-mccarthy-5r2psq`** (not merged to main yet).
+GitHub repo `ceoashon/thestrat-trading-bot`, branch **`claude/new-session-8apn01`** (not merged to main yet).
 Key files:
 - `pine/TheStratAutomation.pine` – the indicator (already installed on TradingView, working). Section 13: "Alerts: Send
   To" (Bot only) and "Bot: Secret". Section 14: the JSON bot messages (`bar` at every candle close with o/h/l/c and the
@@ -52,7 +52,10 @@ Key files:
   `/order/list`, `/fill/list`, `/fill/deps`. The first demo run is the test; fix field names if Tradovate disagrees.
 - Unknown: whether Tradovate rejects a buy stop placed below the market (when the break already happened) or fills it.
 - Tradovate API access may need the API Access add-on and a funded live account. My access is not confirmed.
-- `deploy/setup_server.sh` has only been syntax-checked, never run on a real server.
+- `deploy/setup_server.sh` has not run on a real server yet. Its Python part was tested on Ubuntu 24.04 in a cloud
+  session (venv, install, 17 tests pass as the `bot` user, dry-run bot armed a fake setup from `tools/send_test.py`),
+  and the cloudflared download was checked for both amd64 and arm64. Not tested there: the time zone, systemd
+  services, firewall, and the quick tunnel itself.
 - A login from a data-center IP may make Tradovate ask for a captcha once (the bot stops and says so; I then log in on
   the Tradovate website and restart it).
 
@@ -61,7 +64,7 @@ Key files:
    me the public key to paste into the cloud provider.
 2. I rent the server (DigitalOcean, Vultr or Hetzner; Ubuntu 24.04; smallest size; US region, Chicago if offered) with
    that key, and give you its IP address.
-3. Get the branch onto the Mac (`git clone -b claude/elegant-mccarthy-5r2psq https://github.com/ceoashon/thestrat-trading-bot.git`,
+3. Get the branch onto the Mac (`git clone -b claude/new-session-8apn01 https://github.com/ceoashon/thestrat-trading-bot.git`,
    or I download the ZIP of that branch), then copy it up:
    `scp -r <folder> root@SERVER_IP:/root/thestrat-trading-bot`.
 4. On the server: `useradd -m bot && mv /root/thestrat-trading-bot /home/bot/ && bash /home/bot/thestrat-trading-bot/deploy/setup_server.sh`.

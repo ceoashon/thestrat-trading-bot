@@ -123,10 +123,10 @@ control; `HANDOFF.md` is the prompt for a Claude Code session on the Mac that do
    key (`cat ~/.ssh/id_ed25519.pub`).
 2. Rent the smallest Linux server (Ubuntu 24.04, 1 GB RAM, about $5/month at DigitalOcean, Vultr or Hetzner), US region
    (Chicago if offered), with that SSH key. Note its IP address.
-3. Get this branch onto the Mac (GitHub → branch `claude/elegant-mccarthy-5r2psq` → Code → Download ZIP, unzip) and copy
+3. Get this branch onto the Mac (GitHub → branch `claude/new-session-8apn01` → Code → Download ZIP, unzip) and copy
    it up (use your folder name and IP):
    ```bash
-   scp -r ~/Downloads/thestrat-trading-bot-claude-elegant-mccarthy-5r2psq root@SERVER_IP:/root/thestrat-trading-bot
+   scp -r ~/Downloads/thestrat-trading-bot-claude-new-session-8apn01 root@SERVER_IP:/root/thestrat-trading-bot
    ```
 4. Log in (`ssh root@SERVER_IP`) and run the setup. It sets New York time, installs Python and cloudflared, runs the
    tests, installs the `strat-bot` and `strat-tunnel` services, opens only SSH in the firewall, and prints the tunnel
