@@ -223,6 +223,7 @@ class Engine:
                          self.s["trades_today"])
             elif st not in ("Canceled", "Expired"):
                 log.warning("%s entry %s ended as %s", side, a["entry_id"], st)
+                self.n.send(f"⚠️ {side.capitalize()} entry at {a['entry']} ended as {st}, so it never became a trade")
         self.s["armed"] = {}
         return filled
 

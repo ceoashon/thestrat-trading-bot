@@ -15,6 +15,8 @@ from .config import Config
 log = logging.getLogger("tradovate")
 
 URLS = {"demo": "https://demo.tradovateapi.com/v1", "live": "https://live.tradovateapi.com/v1"}
+# Tradovate accepts an order first and can reject it a moment later, so place_entry waits this long and looks again.
+REJECT_CHECK_S = 0.5
 
 
 def _ts(s: str) -> float:
@@ -134,7 +136,33 @@ class TradovateBroker:
             # never leave an entry without its stop
             self.cancel(d["orderId"])
             raise BrokerError("the entry was placed without its stop, so it was canceled")
+        self._raise_if_rejected(d["orderId"], d["oso1Id"])
         return d["orderId"], d["oso1Id"]
+
+    def _raise_if_rejected(self, order_id, stop_id):
+        time.sleep(REJECT_CHECK_S)
+        try:
+            status = self.order_status(order_id)
+        except BrokerError as e:
+            # the order may be live, so it must stay tracked
+            log.warning("could not check order %s after placing it: %s", order_id, e)
+            return
+        if status != "Rejected":
+            return
+        self.cancel(stop_id)
+        raise BrokerError(f"rejected by Tradovate. {self._reject_reason(order_id)}")
+
+    def _reject_reason(self, order_id):
+        try:
+            rows = self._call("GET", "/commandReport/deps", masterid=order_id) or []
+        except BrokerError as e:
+            log.warning("could not read why order %s was rejected: %s", order_id, e)
+            return "The reason could not be read"
+        for r in rows:
+            if r.get("rejectReason"):
+                hint = "The price had probably already passed this level. " if r["rejectReason"] == "InvalidPrice" else ""
+                return f"{hint}Tradovate says: {r['rejectReason']}, {r.get('text', '')}".rstrip(", ")
+        return "No reason was given"
 
     def order_status(self, order_id):
         d = self._call("GET", "/order/item", id=order_id) or {}

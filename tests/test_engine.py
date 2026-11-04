@@ -253,6 +253,14 @@ class EngineTest(unittest.TestCase):
         self.bar(10, 0, 100.0, 90.0, L=3)
         self.assertEqual(self.e.s["armed"], {})
 
+    def test_rejection_after_arming_is_reported(self):
+        self.bar(10, 0, 100.0, 90.0, L=3)
+        self.b.orders[self.armed("long")["entry_id"]]["status"] = "Rejected"
+        self.bar(10, 5, 99.0, 95.0)
+        self.assertEqual(self.e.s["armed"], {})
+        self.assertEqual(self.e.s["trades_today"], 0)
+        self.assertIn("ended as Rejected", self.n.msgs[-1])
+
     def test_duplicate_and_foreign_messages_are_ignored(self):
         self.bar(10, 0, 100.0, 90.0, L=3)
         n = len(self.b.calls)
