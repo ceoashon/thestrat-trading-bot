@@ -86,6 +86,16 @@ class PlaceEntryTest(unittest.TestCase):
         with self.assertRaisesRegex(BrokerError, "Access is denied"):
             b.account_balance()
 
+    def test_orders_go_to_the_chosen_contract(self):
+        b = FakeTradovate()
+        b.place_entry("long", 3, 100.0, 90.0, symbol="NQZ6")
+        self.assertEqual(b.sent["symbol"], "NQZ6")
+        b.place_entry("long", 3, 100.0, 90.0)
+        self.assertEqual(b.sent["symbol"], "MNQZ6")
+        b = FakeTradovate("Filled", stop_status="Working")
+        b.place_late_entry("long", 3, 100.0, 90.0, "NQZ6")
+        self.assertEqual(b.sent["symbol"], "NQZ6")
+
     def late(self, b, side="long", limit=102.5, stop=90.0):
         return b.place_late_entry(side, 1, limit, stop)
 
@@ -124,6 +134,51 @@ class PlaceEntryTest(unittest.TestCase):
 
     def test_late_entry_unreadable_stays_tracked(self):
         self.assertEqual(self.late(FakeTradovate(status_error=True)), (10, 11))
+
+
+
+class TwoContracts(TradovateBroker):
+    def __init__(self, positions, fills=()):
+        self.cfg = Config(secret="x", big_symbol="NQZ6")
+        self.account_id = 1
+        self.contract_id = 100
+        self.contract_values = {100: 2.0, 200: 20.0}
+        self.positions, self.fills, self.liquidated, self.canceled = positions, list(fills), [], []
+
+    def _call(self, method, path, body=None, retry=True, **params):
+        if path == "/position/list":
+            return self.positions
+        if path == "/fill/list":
+            return self.fills
+        if path == "/order/liquidateposition":
+            self.liquidated.append(body["contractId"])
+            return {}
+        raise AssertionError(path)
+
+
+class TwoContractsTest(unittest.TestCase):
+    def pos(self, contract, net, account=1):
+        return {"accountId": account, "contractId": contract, "netPos": net}
+
+    def test_a_position_on_either_contract_counts(self):
+        self.assertEqual(TwoContracts([self.pos(100, 0), self.pos(200, 3)]).net_position(), 3)
+        self.assertEqual(TwoContracts([self.pos(100, -16)]).net_position(), -16)
+
+    def test_other_accounts_and_contracts_do_not_count(self):
+        self.assertEqual(TwoContracts([self.pos(300, 5), self.pos(200, 5, account=2)]).net_position(), 0)
+
+    def test_flatten_closes_only_what_is_open(self):
+        b = TwoContracts([self.pos(100, 0), self.pos(200, 3)])
+        b.flatten()
+        self.assertEqual(b.liquidated, [200])
+
+    def test_daily_pnl_values_each_contract_by_its_own_size(self):
+        ts = "2026-11-05T01:00:00Z"
+        fills = [{"contractId": 200, "action": "Buy", "price": 100.0, "qty": 2, "timestamp": ts},
+                 {"contractId": 200, "action": "Sell", "price": 101.0, "qty": 2, "timestamp": ts},
+                 {"contractId": 100, "action": "Buy", "price": 100.0, "qty": 10, "timestamp": ts},
+                 {"contractId": 100, "action": "Sell", "price": 99.0, "qty": 10, "timestamp": ts}]
+        self.assertEqual(TwoContracts([], fills).realized_pnl_since(0), 20.0)
 
 
 if __name__ == "__main__":

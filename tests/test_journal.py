@@ -59,6 +59,13 @@ class BuildTradeTest(unittest.TestCase):
         self.assertEqual((t["gross"], t["fees"], t["pnl"], t["riskUsd"]), (1328.0, 30.08, 1297.92, 840.0))
         self.assertEqual(t["holdMins"], 5.0)
 
+    def test_an_nq_trade_uses_twenty_dollars_a_point(self):
+        rec = {"entry_id": 7, "entry": 28521.75, "fill": 28521.5, "stop": 28530.0, "first_stop": 28547.75, "qty": 3,
+               "sig": "Failed 1-2-2 Reversal A+ EXPANSION", "symbol": "NQZ6"}
+        cfg = Config(secret="x", timeframe="1", big_symbol="NQZ6")
+        t = build_trade(cfg, rec, "short", 28480.0, self.ENTRY_MS, self.ENTRY_MS + 60000, 10.0, "stop hit")
+        self.assertEqual((t["symbol"], t["qty"], t["gross"], t["pnl"], t["riskUsd"]), ("NQZ6", 3, 2490.0, 2480.0, 1575.0))
+
     def test_a_plus_lists_the_whole_hierarchy(self):
         self.assertEqual(self.trade("1")["htfAligned"], ["5m", "15m", "30m", "1h"])
         self.assertEqual(self.trade("5")["htfAligned"], ["15m", "30m", "1h"])

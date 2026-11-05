@@ -33,15 +33,15 @@ class FakeBroker:
         self.fees = 0.0
         self.closing_fill = None
 
-    def place_entry(self, side, qty, entry_px, stop_px, limit_px=None):
+    def place_entry(self, side, qty, entry_px, stop_px, limit_px=None, symbol=None):
         eid, sid = self.next, self.next + 1
         self.next += 2
-        self.orders[eid] = {"status": "Working", "px": entry_px, "side": side, "stop": sid, "qty": qty}
+        self.orders[eid] = {"status": "Working", "px": entry_px, "side": side, "stop": sid, "qty": qty, "symbol": symbol}
         self.orders[sid] = {"status": "Suspended", "px": stop_px}
         self.calls.append(("place", side, entry_px, stop_px))
         return eid, sid
 
-    def place_late_entry(self, side, qty, limit_px, stop_px):
+    def place_late_entry(self, side, qty, limit_px, stop_px, symbol=None):
         self.calls.append(("late", side, limit_px, stop_px))
         if not self.late_fills:
             return None
@@ -379,6 +379,68 @@ class EngineTest(unittest.TestCase):
         self.cfg.risk_pct = 5.0
         self.bar(10, 0, 102.0, 100.0, L=3)          # 2.5 points = $5 a contract would be 174 contracts
         self.assertEqual(self.armed("long")["qty"], 100)
+
+    def size(self, high):
+        """The contract and size for a long setup candle from 100.0 up to high. 5% of the balance is $870.05."""
+        self.cfg.risk_pct, self.cfg.big_symbol = 5.0, "NQZ6"
+        self.e.s["armed"] = {}
+        self.e.s["last_bar_t"] = 0
+        self.bar(10, 0, high, 100.0, L=3)
+        a = self.armed("long")
+        return (a["symbol"], a["qty"]) if a else (None, 0)
+
+    def test_under_twenty_micros_stays_on_micros(self):
+        self.assertEqual(self.size(122.5), ("MNQZ6", 18))      # 23 points = $46 a micro
+
+    def test_twenty_micros_or_more_becomes_nq_rounded_down(self):
+        self.assertEqual(self.size(121.0), ("NQZ6", 2))        # 21.5 points = 20 micros
+        self.assertEqual(self.size(117.0), ("NQZ6", 2))        # 17.5 points = 24 micros
+        self.assertEqual(self.size(115.0), ("NQZ6", 2))        # 15.5 points = 28 micros, 3 NQ would be 30
+        self.assertEqual(self.size(113.5), ("NQZ6", 3))        # 14 points = 31 micros
+        self.assertEqual(self.size(110.0), ("NQZ6", 4))        # 10.5 points = 41 micros
+
+    def test_nq_never_risks_more_than_the_percent(self):
+        limit = self.b.balance * 0.05
+        for ticks in range(1, 2000):
+            high = 100.0 + ticks * 0.25
+            symbol, qty = self.size(high)
+            if not qty:
+                continue
+            risk = (high + 0.25 - 99.75) * self.cfg.value_of(symbol) * qty
+            self.assertLessEqual(risk, limit, (ticks, symbol, qty))
+
+    def test_a_tight_stop_on_nq_uses_the_full_percent(self):
+        self.assertEqual(self.size(102.0), ("NQZ6", 17))       # 2.5 points = 174 micros, past the 100 micro limit
+
+    def test_nq_size_still_has_a_limit(self):
+        self.cfg.max_qty = 5
+        self.assertEqual(self.size(102.0), ("NQZ6", 5))
+
+    def test_an_nq_trade_reports_dollars_at_twenty_a_point(self):
+        self.size(110.0)                                       # 4 NQ, entry 110.25, stop 99.75
+        self.assertIn("ARMED LONG** NQZ6 x4", self.n.msgs[-1])
+        self.assertIn("risk -$840.00", self.n.msgs[-1])
+        self.b.fill("long")
+        self.bar(10, 5, 115.0, 108.0)
+        tr = self.e.s["trade"]
+        self.assertEqual((tr["symbol"], tr["qty"], self.b.pos), ("NQZ6", 4, 4))
+        self.assertNotIn(("flatten",), self.b.calls)
+        self.b.orders[tr["stop_id"]]["px"] = 107.75
+        self.b.stop_out(tr["stop_id"])
+        self.bar(10, 10, 109.0, 106.0)
+        self.assertIn("CLOSED LONG** NQZ6", self.n.msgs[-1])
+        self.assertIn("-2.50 pts x4 = **-$200.00**", self.n.msgs[-1])
+        t = self.j.trades[-1]
+        self.assertEqual((t["symbol"], t["qty"], t["gross"], t["riskUsd"]), ("NQZ6", 4, -200.0, 840.0))
+
+    def test_a_late_entry_can_be_nq(self):
+        self.miss_the_break()
+        self.cfg.risk_pct, self.cfg.big_symbol = 5.0, "NQZ6"
+        self.bar(10, 0, 110.0, 100.0, L=3)                     # limit 112.75, stop 99.75: 13 points = 33 micros
+        self.assertEqual(self.b.calls, [("late", "long", 112.75, 99.75)])
+        a = self.armed("long")
+        self.assertEqual((a["symbol"], a["qty"]), ("NQZ6", 3))
+        self.assertIn("LATE ENTRY LONG** NQZ6 x3", self.n.msgs[-1])
 
     def test_a_sized_trade_runs_with_its_own_size(self):
         self.cfg.risk_pct = 5.0

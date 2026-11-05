@@ -58,9 +58,11 @@ def build_trade(cfg: Config, rec: dict, side: str, exit_px: float, entry_ms: int
     entry = rec.get("fill", rec["entry"])
     stop = rec.get("first_stop", rec["stop"])
     qty = rec.get("qty", cfg.qty)
+    symbol = rec.get("symbol", cfg.symbol)
+    value = cfg.value_of(symbol)
     risk = abs(entry - stop)
     pts = (exit_px - entry) * d
-    gross = pts * cfg.point_value * qty
+    gross = pts * value * qty
     best = rec.get("best")
     when = datetime.fromtimestamp(entry_ms / 1000, ZoneInfo(cfg.timezone))
     sig = rec.get("sig", "")
@@ -79,7 +81,7 @@ def build_trade(cfg: Config, rec: dict, side: str, exit_px: float, entry_ms: int
         "realizedR": round(pts / risk, 3) if risk else 0.0, "maeR": None, "holdMins": round((exit_ms - entry_ms) / 60000, 2),
         "emotion": "", "plan": "", "notes": notes, "link": "", "shotIds": [], "ibCount": p["ibCount"],
         "pnl": round(gross - (fees or 0.0), 2), "gross": round(gross, 2), "fees": None if fees is None else round(fees, 2),
-        "riskUsd": round(risk * cfg.point_value * qty, 2), "qty": qty, "pts": round(pts, 4), "symbol": cfg.symbol,
+        "riskUsd": round(risk * value * qty, 2), "qty": qty, "pts": round(pts, 4), "symbol": symbol,
         "imported": True, "review": False, "bot": True, "entryMs": entry_ms, "exitMs": exit_ms,
     }
 

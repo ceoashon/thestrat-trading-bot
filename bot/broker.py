@@ -20,10 +20,11 @@ class PriceAlreadyPast(BrokerError):
 
 
 class Broker(Protocol):
-    def place_entry(self, side: str, qty: int, entry_px: float, stop_px: float, limit_px: float | None = None) -> tuple[int, int]:
+    def place_entry(self, side: str, qty: int, entry_px: float, stop_px: float, limit_px: float | None = None,
+                    symbol: str | None = None) -> tuple[int, int]:
         """Rests a stop entry with its protective stop attached (OSO). Returns (entry order id, stop order id)."""
 
-    def place_late_entry(self, side: str, qty: int, limit_px: float, stop_px: float) -> tuple[int, int] | None:
+    def place_late_entry(self, side: str, qty: int, limit_px: float, stop_px: float, symbol: str | None = None) -> tuple[int, int] | None:
         """One try to enter at limit_px or better, with the protective stop attached. The whole qty fills at once or
         nothing does. Returns (entry order id, stop order id), or None when nothing filled."""
 
@@ -68,7 +69,7 @@ class DryRunBroker:
         self.next_id = 1
         self.status: dict[int, str] = {}
 
-    def place_entry(self, side, qty, entry_px, stop_px, limit_px=None):
+    def place_entry(self, side, qty, entry_px, stop_px, limit_px=None, symbol=None):
         eid, sid = self.next_id, self.next_id + 1
         self.next_id += 2
         self.status[eid] = "Working"
@@ -77,7 +78,7 @@ class DryRunBroker:
                  qty, "stop-limit" if limit_px else "stop", entry_px, f" limit {limit_px}" if limit_px else "", stop_px, eid, sid)
         return eid, sid
 
-    def place_late_entry(self, side, qty, limit_px, stop_px):
+    def place_late_entry(self, side, qty, limit_px, stop_px, symbol=None):
         log.info("[DRY RUN] late entry %s %d limit %s, protective stop %s: not filled", "BUY" if side == "long" else "SELL",
                  qty, limit_px, stop_px)
         return None

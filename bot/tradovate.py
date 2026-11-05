@@ -38,6 +38,7 @@ class TradovateBroker:
         self.account_id: int | None = None
         self.account_spec = ""
         self.contract_id: int | None = None
+        self.contract_values: dict[int, float] = {}
 
     # ---------------------------------------------------------------- session
     def connect(self) -> None:
@@ -53,6 +54,12 @@ class TradovateBroker:
         if not c or "id" not in c:
             raise BrokerError(f"contract {self.cfg.symbol} not found (check the month code, for example MNQZ6)")
         self.contract_id = c["id"]
+        self.contract_values = {c["id"]: self.cfg.point_value}
+        if self.cfg.big_symbol:
+            big = self._call("GET", "/contract/find", name=self.cfg.big_symbol)
+            if not big or "id" not in big:
+                raise BrokerError(f"contract {self.cfg.big_symbol} not found (check the month code, for example NQZ6)")
+            self.contract_values[big["id"]] = self.cfg.value_of(self.cfg.big_symbol)
         log.info("connected to Tradovate %s, account %s (%s), contract %s (%s)", self.cfg.env, self.account_spec,
                  self.account_id, self.cfg.symbol, self.contract_id)
 
@@ -122,11 +129,11 @@ class TradovateBroker:
         raise BrokerError(f"{path}: no answer")
 
     # ---------------------------------------------------------------- orders
-    def place_entry(self, side, qty, entry_px, stop_px, limit_px=None):
+    def place_entry(self, side, qty, entry_px, stop_px, limit_px=None, symbol=None):
         buy = side == "long"
         body = {
             "accountSpec": self.account_spec, "accountId": self.account_id, "action": "Buy" if buy else "Sell",
-            "symbol": self.cfg.symbol, "orderQty": qty, "orderType": "StopLimit" if limit_px else "Stop",
+            "symbol": symbol or self.cfg.symbol, "orderQty": qty, "orderType": "StopLimit" if limit_px else "Stop",
             "stopPrice": entry_px, "timeInForce": "Day", "isAutomated": True,
             "bracket1": {"action": "Sell" if buy else "Buy", "orderType": "Stop", "stopPrice": stop_px, "timeInForce": "GTC"},
         }
@@ -156,11 +163,11 @@ class TradovateBroker:
         reason = self._reject_reason(order_id)
         raise (PriceAlreadyPast if "InvalidPrice" in reason else BrokerError)(f"rejected by Tradovate. {reason}")
 
-    def place_late_entry(self, side, qty, limit_px, stop_px):
+    def place_late_entry(self, side, qty, limit_px, stop_px, symbol=None):
         buy = side == "long"
         body = {
             "accountSpec": self.account_spec, "accountId": self.account_id, "action": "Buy" if buy else "Sell",
-            "symbol": self.cfg.symbol, "orderQty": qty, "orderType": "Limit", "price": limit_px, "timeInForce": "FOK",
+            "symbol": symbol or self.cfg.symbol, "orderQty": qty, "orderType": "Limit", "price": limit_px, "timeInForce": "FOK",
             "isAutomated": True,
             "bracket1": {"action": "Sell" if buy else "Buy", "orderType": "Stop", "stopPrice": stop_px, "timeInForce": "GTC"},
         }
@@ -244,33 +251,41 @@ class TradovateBroker:
             return False
         return True
 
-    def net_position(self):
+    def _positions(self):
         rows = self._call("GET", "/position/list") or []
-        return int(sum(p.get("netPos", 0) for p in rows if p.get("accountId") == self.account_id and p.get("contractId") == self.contract_id))
+        return [p for p in rows if p.get("accountId") == self.account_id and p.get("contractId") in self.contract_values]
+
+    def net_position(self):
+        # the bot holds one trade at a time, so only one of its contracts is ever open
+        return int(sum(p.get("netPos", 0) for p in self._positions()))
 
     def cancel_all(self):
         rows = self._call("GET", "/order/list") or []
         for o in rows:
-            if o.get("accountId") == self.account_id and o.get("contractId") == self.contract_id and o.get("ordStatus") in LIVE_STATUSES:
+            if o.get("accountId") == self.account_id and o.get("contractId") in self.contract_values and o.get("ordStatus") in LIVE_STATUSES:
                 self.cancel(o["id"])
 
     def flatten(self):
-        d = self._call("POST", "/order/liquidateposition", {"accountId": self.account_id, "contractId": self.contract_id,
-                                                              "admin": False}, retry=False) or {}
-        if d.get("failureReason"):
-            raise BrokerError(f"flatten rejected: {d.get('failureReason')} {d.get('failureText', '')}")
+        for p in self._positions():
+            if not p.get("netPos"):
+                continue
+            d = self._call("POST", "/order/liquidateposition", {"accountId": self.account_id, "contractId": p["contractId"],
+                                                                  "admin": False}, retry=False) or {}
+            if d.get("failureReason"):
+                raise BrokerError(f"flatten rejected: {d.get('failureReason')} {d.get('failureText', '')}")
 
     def realized_pnl_since(self, since_ms):
-        """Sells minus buys of this contract since since_ms, in dollars. Exact while the bot is flat (it only asks then)."""
+        """Sells minus buys of the bot's contracts since since_ms, in dollars. Exact while the bot is flat (it only asks then)."""
         rows = self._call("GET", "/fill/list") or []
         cash = 0.0
         for f in rows:
-            if f.get("contractId") != self.contract_id or not f.get("active", True):
+            value = self.contract_values.get(f.get("contractId"))
+            if value is None or not f.get("active", True):
                 continue
             if _ts(f["timestamp"]) * 1000 < since_ms:
                 continue
-            cash += (1 if f.get("action") == "Sell" else -1) * f["price"] * f["qty"]
-        return cash * self.cfg.point_value
+            cash += (1 if f.get("action") == "Sell" else -1) * f["price"] * f["qty"] * value
+        return cash
 
     def filled_qty(self, order_id):
         rows = self._call("GET", "/fill/deps", masterid=order_id) or []
@@ -289,7 +304,7 @@ class TradovateBroker:
         return total
 
     def last_fill(self):
-        rows = [f for f in (self._call("GET", "/fill/list") or []) if f.get("contractId") == self.contract_id and f.get("active", True)]
+        rows = [f for f in (self._call("GET", "/fill/list") or []) if f.get("contractId") in self.contract_values and f.get("active", True)]
         if not rows:
             return None
         f = max(rows, key=lambda x: _ts(x["timestamp"]))

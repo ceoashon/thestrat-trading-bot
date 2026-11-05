@@ -32,6 +32,9 @@ class Config:
     timeframe: str = "5"
     tick_size: float = 0.25
     point_value: float = 2.0
+    big_symbol: str = ""
+    big_ratio: int = 10
+    big_from: int = 20
     # orders
     qty: int = 1
     entry_offset_ticks: int = 1
@@ -76,6 +79,10 @@ class Config:
     journal_token: str = ""
     journal_spool: str = "journal_queue.jsonl"
 
+    def value_of(self, symbol: str) -> float:
+        """Dollars per point of one contract of the symbol."""
+        return self.point_value * self.big_ratio if symbol == self.big_symbol else self.point_value
+
 
 def load_config(path: str) -> Config:
     with open(path, "rb") as f:
@@ -103,6 +110,9 @@ def load_config(path: str) -> Config:
         timeframe=str(ins.get("timeframe", d.timeframe)),
         tick_size=float(ins.get("tick_size", d.tick_size)),
         point_value=float(ins.get("point_value", d.point_value)),
+        big_symbol=ins.get("big_symbol", d.big_symbol),
+        big_ratio=int(ins.get("big_ratio", d.big_ratio)),
+        big_from=int(ins.get("big_from", d.big_from)),
         qty=int(od.get("qty", d.qty)),
         entry_offset_ticks=int(od.get("entry_offset_ticks", d.entry_offset_ticks)),
         stop_buffer_ticks=int(od.get("stop_buffer_ticks", d.stop_buffer_ticks)),

@@ -18,6 +18,9 @@ tv_tickers = ["MNQ1!", "NQ1!"]   # the TradingView charts allowed to trade it (s
 timeframe = "5"           # the chart timeframe the alert runs on
 tick_size = 0.25
 point_value = 2.0         # dollars per point: MNQ 2, NQ 20, MES 5, ES 50
+big_symbol = ""           # the full-size contract, for example NQZ6. When risk_pct sizes a trade at big_from contracts or more, it trades this instead, for lower fees. Blank = off. Change its month code at each roll too
+big_ratio = 10            # how many of symbol equal one big_symbol: 10 MNQ = 1 NQ. Always rounded down, so the risk never goes over risk_pct
+big_from = 20             # the contract count where it switches to big_symbol
 
 [orders]
 qty = 1                   # contracts per trade. Not used when risk_pct is on
