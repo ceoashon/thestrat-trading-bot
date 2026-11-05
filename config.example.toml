@@ -60,6 +60,7 @@ log_file = "bot.log"
 
 [notify]
 discord_webhook = ""      # Discord: channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL
+discord_bot_token = ""    # optional: turns on /day /week /month /total in the webhook's channel. See BOT_SETUP.md. Never share it
 heartbeat_url = ""        # optional: a healthchecks.io ping URL. It alerts you if the bot stops pinging (bot or server down)
 armed = true              # message when a setup is armed (the stop entry is placed)
 cancels = false           # message when an entry is canceled (no break, or the other side broke first). Busy, off by default

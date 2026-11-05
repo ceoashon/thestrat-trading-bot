@@ -245,5 +245,6 @@ config.toml
 bot_state.json
 bot_state.json.tmp
 journal_queue.jsonl*
+pnl_history.jsonl
 bot.log*
 .last_test_bar

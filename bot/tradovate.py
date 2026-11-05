@@ -316,6 +316,15 @@ class TradovateBroker:
             raise BrokerError(f"could not read the account balance: {d.get('errorText', 'no balance in the answer')}")
         return float(d["netLiq"])
 
+    def cash_snapshot(self):
+        d = self._call("POST", "/cashBalance/getcashbalancesnapshot", {"accountId": self.account_id}) or {}
+        if d.get("netLiq") is None:
+            raise BrokerError(f"could not read the account balance: {d.get('errorText', 'no balance in the answer')}")
+        return d
+
+    def cash_log(self):
+        return self._call("GET", "/cashBalanceLog/deps", masterid=self.account_id) or []
+
     def fill_price(self, order_id):
         try:
             rows = self._call("GET", "/fill/deps", masterid=order_id) or []

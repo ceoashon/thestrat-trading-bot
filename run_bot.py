@@ -5,6 +5,7 @@ import argparse
 import logging
 import socket
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 
@@ -13,7 +14,20 @@ from bot.config import load_config
 from bot.engine import Engine
 from bot.journal import JournalLogger
 from bot.notify import Notifier
+from bot.pnl import PnlLedger
 from bot.server import make_server
+
+
+def start_commands(cfg, broker, notifier, log) -> None:
+    """The P&L history and the Discord commands. Nothing here may ever stop the trading."""
+    try:
+        ledger = PnlLedger(broker, cfg.pnl_file, cfg.timezone, cfg.day_reset)
+        threading.Thread(target=ledger.keep_saving, name="pnl", daemon=True).start()
+        if cfg.discord_bot_token and cfg.discord_webhook:
+            from bot.discord_commands import DiscordCommands
+            DiscordCommands(cfg.discord_bot_token, cfg.discord_webhook, ledger, notifier).start()
+    except Exception as e:
+        log.warning("the Discord commands did not start: %s", e)
 
 
 def main() -> int:
@@ -55,6 +69,8 @@ def main() -> int:
     notifier.send(f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} {size}, {cfg.timeframe}m, "
                   f"window {cfg.start:%H:%M}-{cfg.end:%H:%M} ET, flatten {cfg.flatten_at:%H:%M}" if cfg.flatten_at else
                   f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} {size}")
+    if not cfg.dry_run:
+        start_commands(cfg, broker, notifier, log)
     srv = make_server(cfg, engine)
     log.info("trading %s %s on %sm candles, window %s-%s %s, listening on http://%s:%d/webhook", cfg.symbol, size,
              cfg.timeframe, cfg.start.strftime("%H:%M"), cfg.end.strftime("%H:%M"), cfg.timezone, cfg.host, cfg.port)

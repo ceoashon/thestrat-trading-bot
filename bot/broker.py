@@ -52,6 +52,12 @@ class Broker(Protocol):
     def account_balance(self) -> float:
         """The account's balance in dollars. Raises BrokerError when it cannot be read."""
 
+    def cash_snapshot(self) -> dict:
+        """The account right now: netLiq (balance) and openPnL (the open trade), in dollars."""
+
+    def cash_log(self) -> list[dict]:
+        """Every cash change the broker still has: id, tradeDate, cashChangeType and delta (dollars)."""
+
     def fill_time(self, order_id: int) -> int | None:
         """When an order last filled, in milliseconds, or None when unknown."""
 
@@ -119,6 +125,12 @@ class DryRunBroker:
 
     def account_balance(self):
         return 50000.0
+
+    def cash_snapshot(self):
+        return {"netLiq": 50000.0, "openPnL": 0.0}
+
+    def cash_log(self):
+        return []
 
     def fill_time(self, order_id):
         return None

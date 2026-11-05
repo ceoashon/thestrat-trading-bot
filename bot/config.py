@@ -1,5 +1,5 @@
 """Loads config.toml. Secrets can also come from environment variables so they never sit in a file:
-TRADOVATE_USERNAME, TRADOVATE_PASSWORD, TRADOVATE_CID, TRADOVATE_SEC, BOT_SECRET, DISCORD_WEBHOOK."""
+TRADOVATE_USERNAME, TRADOVATE_PASSWORD, TRADOVATE_CID, TRADOVATE_SEC, BOT_SECRET, DISCORD_WEBHOOK, DISCORD_BOT_TOKEN."""
 from __future__ import annotations
 
 import os
@@ -69,6 +69,8 @@ class Config:
     log_file: str = "bot.log"
     # notifications
     discord_webhook: str = ""
+    discord_bot_token: str = ""
+    pnl_file: str = "pnl_history.jsonl"
     heartbeat_url: str = ""
     notify_armed: bool = True
     notify_cancels: bool = False
@@ -142,6 +144,8 @@ def load_config(path: str) -> Config:
         state_file=sv.get("state_file", d.state_file),
         log_file=sv.get("log_file", d.log_file),
         discord_webhook=os.environ.get("DISCORD_WEBHOOK", nt.get("discord_webhook", d.discord_webhook)),
+        discord_bot_token=os.environ.get("DISCORD_BOT_TOKEN", nt.get("discord_bot_token", d.discord_bot_token)),
+        pnl_file=nt.get("pnl_file", d.pnl_file),
         heartbeat_url=nt.get("heartbeat_url", d.heartbeat_url),
         notify_armed=bool(nt.get("armed", d.notify_armed)),
         notify_cancels=bool(nt.get("cancels", d.notify_cancels)),

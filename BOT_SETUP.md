@@ -115,6 +115,14 @@ or off in `[notify]`.
 healthchecks.io (period 1 minute, grace 5 minutes), connect its Discord integration to your channel, and paste the
 check's ping URL as `heartbeat_url`. The bot pings it every minute; if the pings stop, healthchecks.io posts to Discord.
 
+**P&L commands:** `/day`, `/week`, `/month` and `/total` answer in the webhook's channel with the account's P&L after
+fees and its balance. They come from Tradovate's record of every cash change, so they include anything else traded on the
+account. Today runs from 6 PM ET the evening before, a week starts Sunday 6 PM ET, and the total starts at the oldest
+change Tradovate had when this was installed. A webhook can only post, so the commands need a small Discord bot:
+1. At discord.com/developers/applications: **New Application**, name it, then **Bot → Reset Token → Copy**.
+2. Paste the token into `config.toml` under `[notify]` as `discord_bot_token`, and restart the bot.
+3. The bot posts a link in the channel. Open it and add the bot to your server. "Discord commands are ready" follows.
+
 ## 8. Run it in the cloud (no home computer needed)
 TradingView alerts already run on TradingView's servers. Put the bot on a small cloud server and the whole chain runs
 with your computer off: TradingView servers → cloud server → Tradovate. Your Mac (or any computer) is only the remote
