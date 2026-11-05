@@ -14,6 +14,12 @@
 //       WITHOUT breaking the low first, a short the mirror, the same rule this indicator uses for its trades).
 // HOW: create ONE alert on the 5 minute chart: Condition = TheStrat Automation, "Any alert() function call", Expiration
 // open-ended, Notifications: Webhook URL = the bot's URL. Recreate the alert after changing any setting.
+// v2.1: A+ IS ONLY RECLAIM OR EXPANSION. RECLAIM: price took out a swing low at the bottom of the broadening formation
+//       (a swing high at the top) on the setup candle or up to 2 candles before it (Reclaim: Swing Taken Out Within),
+//       and the trigger is back through it; also the bigger timeframe high or low reclaim. EXPANSION: the trigger is at
+//       the edge the trade breaks through. Removed: Trend Expansion (pullbacks anywhere, also mid-range), REVERSAL (near
+//       an edge without a take out), the old 20 candle reclaim window, the Middle No-Trade Zone setting (the middle never
+//       qualifies now). Setups to Take is two rows: Reclaim and Expansion, each with + FLIP.
 // The version history of the signals and filters is in TheStrat Trader V2.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -492,8 +498,8 @@ showTrades = input.bool(true, "Draw Trades on the Chart", group = g1, tooltip = 
 rrShowTbl = input.bool(false, "RR Table: Show the Table", group = g1, active = rrMode, tooltip = "WHAT: a small table with the RR it refers to, the win rate, the average points to the profit target, the average points when stopped out, the break-even win rate and the average R. It counts every closed trade of the analysis (adds left out).\n\nON THE CHART: ON draws the table. OFF hides it and the status panel comes back. The trades are the same either way.\n\nNEEDS: Analysis Mode (in 1. Quick Start) switched on. Until then it is greyed out.")
 showPanel = input.bool(false, "Panel: Show the Status Panel", group = g1, tooltip = "WHAT: a small table with a strip showing each timeframe up or down, continuity now, your open position, the watched setup, today's count, the Success Protocol status and your results.\n\nON THE CHART: ON shows the panel. OFF hides it. While Analysis Mode is ON the Risk-Reward table takes its place, unless you turn on RR Table: Also Show the Status Panel or switch the RR table off. Turn Analysis Mode OFF and the panel comes back.")
 showScore = input.bool(false, "Scorecard: Show the Table", group = g1, tooltip = "WHAT: a table that scores every closed trade on the chart: win rate, profit factor, drawdown, and results by signal, grade, direction, hour and weekday.\n\nON THE CHART: OFF by default. ON adds the table. Use it to judge a rule change on data instead of feel. Adds are left out of the table (the panel still has an Adds row).")
-locOn = input.bool(true, "Broadening Formation Filter (A+ Setups Only)", group = g1, tooltip = "WHAT: only takes trades that start at the top or the bottom of the broadening formation on your chart.\n\nA+ trades: a short from the top, a long from the bottom, a short that breaks the bottom, and a long that breaks the top.\n\nSkipped: trades from the middle of the formation, and trades that are not near the top or the bottom.\n\nON THE CHART: skipped trades, their alerts and their setup labels are removed. The panel and the watch label say why.\n\nOFF: works exactly like Strat Trader v3.14.")
-locTagOnly = input.bool(false, "Broadening Formation: Tag Trades Only (Do Not Filter)", group = g1, active = not locOn, tooltip = "WHAT: labels every trade with where it started in the broadening formation, without removing any trades. OFF by default, because the Filter above is ON and already tags every trade it takes. Use this instead of the Filter to see every trade with its tag.\n\nA+ TOP RECLAIM: a short after price took out the top and came back in.\n\nA+ TOP REVERSAL: a short from near the top.\n\nA+ BOTTOM RECLAIM and A+ BOTTOM REVERSAL: the same for longs at the bottom.\n\nA+ BOTTOM EXPANSION: a short that breaks the bottom.\n\nA+ TOP EXPANSION: a long that breaks the top.\n\nA+ EXPANSION: a trade with the trend after a small pullback (Trend Expansion).\n\nNOT A+: the filter would skip it. Hover over the trade to see why.\n\nTIP: turn on the Scorecard and set View to By location to compare them.")
+locOn = input.bool(true, "Broadening Formation Filter (A+ Setups Only)", group = g1, tooltip = "WHAT: only takes trades that start at the top or the bottom of the broadening formation on your chart.\n\nA+ trades: a RECLAIM (price took out a swing high at the top or a swing low at the bottom and the trade goes back through) and an EXPANSION (a breakout at the top or the bottom).\n\nSkipped: everything else, like trades from the middle of the formation.\n\nON THE CHART: skipped trades, their alerts and their setup labels are removed. The panel and the watch label say why.\n\nOFF: works exactly like Strat Trader v3.14.")
+locTagOnly = input.bool(false, "Broadening Formation: Tag Trades Only (Do Not Filter)", group = g1, active = not locOn, tooltip = "WHAT: labels every trade with where it started in the broadening formation, without removing any trades. OFF by default, because the Filter above is ON and already tags every trade it takes. Use this instead of the Filter to see every trade with its tag.\n\nA+ TOP RECLAIM: a short after price took out a swing high at the top and came back below it.\n\nA+ BOTTOM RECLAIM: a long after price took out a swing low at the bottom and came back above it.\n\nA+ 1H HIGH RECLAIM and 1H LOW RECLAIM: the same with the bigger timeframe high or low.\n\nA+ BOTTOM EXPANSION: a short that breaks the bottom.\n\nA+ TOP EXPANSION: a long that breaks the top.\n\nNOT A+: the filter would skip it. Hover over the trade to see why.\n\nTIP: turn on the Scorecard and set View to By location to compare them.")
 bool locAny = locOn or locTagOnly
 locDraw = input.bool(true, "Broadening Formation: Draw the Lines", group = g1, active = locAny, tooltip = "WHAT: draws the current broadening formation.\n\nSOLID LINES: the top runs from the highest swing high that was taken out to the higher high, the bottom from the lowest swing low that was taken out to the lower low.\n\nDASHED LINES: the internal formation, built from the small swings. It moves on to every newest higher high and lower low. Its bottom line disappears once price breaks the solid bottom, and its top line once price breaks the solid top.\n\nYELLOW DOTTED LINES: the micro formation inside the dashed one. It only moves when price takes out the high or low it connects to.\n\nSOLID LINES: they only move when price takes out the high or low they connect to, or when that high or low is far away (Big Formation: Let Go of a Far High or Low).\n\nThe lines are redrawn every time a new swing high or swing low confirms, so they always show the formation price is in right now.")
 
@@ -554,30 +560,20 @@ tooCloseMode = "Use the next target"
 
 // -------------------- 4. BROADENING FORMATIONS (A+ ZONES): setups to take, trend expansion, range, A+ rules, lines, colors --------------------
 tkRec = input.bool(true, "Take: Reclaim", group = gLoc, inline = "tk1", active = locAny)
-tkRecF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk1", active = locAny, tooltip = "SETUPS TO TAKE: tick the setups you want. A signal whose tag is not ticked is skipped (no trade, no alert). All ticked = nothing is skipped.\n\nRECLAIM: price took out the top or bottom of the broadening formation (the sloped lines) and came back inside.\n\n+ FLIP: the same setup tagged +FLIP (two or more continuity timeframes opened together with full continuity). Each setup has its own + FLIP box, so Reclaim alone and Reclaim +FLIP can be picked apart.")
-tkRng = input.bool(true, "Take: Range Reclaim", group = gLoc, inline = "tk2", active = locAny)
-tkRngF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk2", active = locAny, tooltip = "RANGE RECLAIM: price took out the high or low of the bigger timeframe candle (the flat lines, for example 1H HIGH) and came back inside. Tagged 1H HIGH RECLAIM, 1H LOW RECLAIM and so on.")
-tkRev = input.bool(true, "Take: Reversal", group = gLoc, inline = "tk3", active = locAny)
-tkRevF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk3", active = locAny, tooltip = "REVERSAL: a reversal from near the top or bottom of the formation, without taking it out. Tagged TOP REVERSAL or BOTTOM REVERSAL.")
-tkExp = input.bool(true, "Take: Expansion", group = gLoc, inline = "tk4", active = locAny)
-tkExpF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk4", active = locAny, tooltip = "EXPANSION: a breakout at the edge of the formation (TOP or BOTTOM EXPANSION) or a pullback in a trend (EXPANSION).")
-tkNot = input.bool(true, "Take: Not A+", group = gLoc, active = locAny, tooltip = "NOT A+: signals that are none of the setups above. Untick it to take A+ setups only (the same as the Broadening Formation Filter).")
-locTrend = input.bool(true, "Trend Expansion (Pullback in a Trend)", group = gLoc, active = locAny, tooltip = "WHAT: a trade with the trend after a pullback is A+ EXPANSION, wherever it sits in the formation.\n\nSHORT: over the lookback, price fell from its highest high to its lowest low (the high came first), and the setup candle pulled back up no more than the Deepest Pullback of that fall. Price is expected to keep going down.\n\nLONG: the mirror, a rise from the lowest low to the highest high, and a shallow pullback down.\n\nON THE CHART: tagged A+ EXPANSION. Breakouts at the edge of the formation keep their A+ TOP / BOTTOM EXPANSION tag.\n\nHOVER: a NOT A+ trade's reason ends with what this test saw, for example trend: fall 21.0 pts (5.2 ATR), pullback 71% (max 62%).\n\nOFF: only breakouts at the edge count as expansion.")
-locTrendLen = input.int(60, "Trend Expansion: Lookback (candles)", minval = 10, maxval = 300, group = gLoc, display = display.none, active = locAny and locTrend, tooltip = "WHAT: how many candles back to look for the trend move, from its highest high to its lowest low.\n\nIt must cover the whole move and its pullback.\n\nEXAMPLE: 60 on a 1 minute chart is the last hour.")
-locTrendAtr = input.float(3.0, "Trend Expansion: Smallest Move (ATR)", minval = 0, step = 0.5, group = gLoc, display = display.none, active = locAny and locTrend, tooltip = "WHAT: the smallest trend move that counts, in average candle sizes (ATR).\n\nEXAMPLE: if an average candle is 2 points, 3 needs a move of at least 6 points from the high to the low.\n\n0 turns this off.")
-locTrendPb = input.float(62.0, "Trend Expansion: Deepest Pullback (%)", minval = 10, maxval = 100, step = 1, group = gLoc, display = display.none, active = locAny and locTrend, tooltip = "WHAT: how far the setup candle may pull back into the trend move, in percent of the move.\n\nEXAMPLE: a fall from 3966 to 3946 (20 points) with 62 allows a pullback up to 3958.4. A deeper pullback is not A+ EXPANSION.")
+tkRecF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk1", active = locAny, tooltip = "SETUPS TO TAKE: the two A+ setups. Tick the ones you want. A signal whose setup is not ticked is skipped (no trade, no alert, no bot message).\n\nRECLAIM: price took out a swing low at the bottom of the broadening formation (a swing high at the top, for a short) on the setup candle or just before it, and the trigger is back inside, above that low (below that high). Also a reclaim of the bigger timeframe high or low (the flat lines, for example 1H LOW RECLAIM).\n\n+ FLIP: the same setup on a candle where two or more continuity timeframes open together with full continuity. Reclaim alone and Reclaim +FLIP can be picked apart.")
+tkExp = input.bool(true, "Take: Expansion", group = gLoc, inline = "tk2", active = locAny)
+tkExpF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk2", active = locAny, tooltip = "EXPANSION: a breakout at the edge of the formation. The trigger sits close to the top (a long, TOP EXPANSION) or the bottom (a short, BOTTOM EXPANSION), so the break takes out that high or low and keeps going. Blocked while the next timeframe up is an inside bar and after a failed breakout (both switches below).\n\n+ FLIP: the same setup on a flip candle.\n\nEverything else (the middle of the formation, or near an edge without taking out a swing) is NOT A+ and is skipped by the filter.")
 locRngTf = input.string("Auto", "Range: Bigger Timeframe", options = ["Off", "Auto", "15", "60", "240", "720", "D", "W"], group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: the range you are trading back through: the high and low of the previous candle of this timeframe. When that candle is an inside bar, its mother bar is used instead.\n\nON THE CHART: two horizontal lines with their names, for example 1H HIGH and 1H LOW.\n\nA+: price takes out one side, then the setup triggers back inside. A short after the high was taken out is A+ 1H HIGH RECLAIM, and its target is the low.\n\nAUTO: 1H on charts up to 5 minutes, 4H up to 30 minutes, Daily up to 4 hours, Weekly above that. Off turns the range off.")
 locRngDraw = input.bool(true, "Range: Draw the Bigger Timeframe High and Low", group = gLoc, active = locAny and locDraw and locRngTf != "Off", tooltip = "WHAT: shows or hides the bigger timeframe high and low lines (the flat purple lines, for example 1H HIGH and 1H LOW).\n\nON THE CHART: OFF removes the two lines and their price labels.\n\nEXAMPLE: turn it off to clean up the chart. A+ 1H HIGH RECLAIM and 1H LOW RECLAIM trades are still tagged and taken, only the lines are hidden.")
-locRoomR = input.float(1.5, "Range: Minimum Room to the Other Side (R)", minval = 0.0, maxval = 20.0, step = 0.5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: a trade back through a range (RECLAIM or REVERSAL) needs at least this much room to the other side, measured in R (1R = from the trigger to the stop side of the setup candle).\n\nA range too small to pay you is NOT A+, and the trade says why, for example: range too small, 0.8R to the 1H low, needs 1.5R.\n\nBreakouts (EXPANSION) are not checked. 0 turns this off.")
+locRoomR = input.float(1.5, "Range: Minimum Room to the Other Side (R)", minval = 0.0, maxval = 20.0, step = 0.5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: a trade back through a range (a RECLAIM) needs at least this much room to the other side, measured in R (1R = from the trigger to the stop side of the setup candle).\n\nA range too small to pay you is NOT A+, and the trade says why, for example: range too small, 0.8R to the 1H low, needs 1.5R.\n\nBreakouts (EXPANSION) are not checked. 0 turns this off.")
 locMinStops = input.int(0, "Range: Minimum Stops to Take Out", minval = 0, maxval = 30, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: an A+ trade back through a range shows how many swing lows (highs for a long) sit between the trigger and the other side, for example A+ 1H HIGH RECLAIM | 6 LOWS. Each one is a group of stops that fuels the move.\n\nWith a number here, a trade with fewer is NOT A+.\n\n0: show the count, never filter.")
 locNeedFlip = input.bool(false, "A+ Needs a Continuity FLIP", group = gLoc, active = locAny, tooltip = "WHAT: an A+ trade on a candle where two or more continuity timeframes opened a new candle together, with full continuity, is tagged +FLIP.\n\nON: only those trades are A+.\n\nOFF: the tag is shown, nothing is filtered.")
-locTgtOpp = input.bool(true, "Target the Other Side", group = gLoc, active = locAny, tooltip = "WHAT: an A+ RECLAIM or REVERSAL (a trade back through a range or formation) aims its First Target at the other side: the far side of the bigger timeframe range, or the opposite line of the formation, when that is farther than its own First Target.\n\nIts reward to risk is measured again with the new target.\n\nOFF: the First Target comes from the signal as in Strat Trader.")
+locTgtOpp = input.bool(true, "Target the Other Side", group = gLoc, active = locAny, tooltip = "WHAT: an A+ RECLAIM (a trade back through a range or formation) aims its First Target at the other side: the far side of the bigger timeframe range, or the opposite line of the formation, when that is farther than its own First Target.\n\nIts reward to risk is measured again with the new target.\n\nOFF: the First Target comes from the signal as in Strat Trader.")
 locStayOut = input.bool(true, "Breakouts Must Stay Out (Get Out, Stay Out)", group = gLoc, active = locAny, tooltip = "WHAT: once price closes outside a formation and then closes back inside, that breakout failed. EXPANSION trades that way are not A+ until price closes outside again.\n\nA failed breakout usually goes to the other side instead.")
 locHtfBreak = input.bool(true, "No Breakouts While the Higher Timeframe Is an Inside Bar", group = gLoc, active = locAny, tooltip = "WHAT: skips EXPANSION trades (breakouts) while the last closed candle of the next timeframe up is an inside bar (1).\n\nWhile the bigger timeframe is inside, breakouts on your chart usually lack the strength to escape it, and reversals are the better trade.\n\nWHICH TIMEFRAME: 15s and 1m check 5m, 5m checks 15m, 15m and 30m check 1H, 1H checks 4H, 4H checks Daily.")
 locMinAtr = input.float(2.0, "Minimum Formation Size (ATR)", minval = 0.0, maxval = 20.0, step = 0.25, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: the smallest formation that counts, measured in average candle sizes (ATR).\n\nA smaller one is a tight little triangle where traders get chopped up, so no trades are taken from it.\n\nEXAMPLE: if an average candle is 4 points, 2.0 needs a formation at least 8 points tall.")
-locEdgePct = input.int(25, "Top and Bottom Zones (% of the formation)", minval = 5, maxval = 40, step = 5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how close to the top or bottom counts as at the top or at the bottom.\n\n25 means the top quarter and the bottom quarter of the formation.\n\nEXAMPLE: a formation from 100 to 120. The bottom zone is 100 to 105 and the top zone is 115 to 120.")
-locMidPct = input.int(20, "Middle No-Trade Zone (% of the formation)", minval = 0, maxval = 60, step = 5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: the middle of the formation, where no trade is taken.\n\n20 means the middle 20 percent, from 40 to 60 percent of the way up.\n\nTrades between the middle and the top or bottom zones are skipped too, because they are not near the high or the low.")
-locLookback = input.int(20, "Reclaim: Took Out the Top or Bottom Within (candles)", minval = 1, maxval = 200, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: a short from the top is called a RECLAIM when price took out the top within this many candles, and a REVERSAL when it only got close. The same for longs at the bottom.\n\nBoth are A+ trades. The tag just tells you which one it was.")
+locEdgePct = input.int(25, "Top and Bottom Zones (% of the formation)", minval = 5, maxval = 40, step = 5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how close to the top or bottom counts as at the top or at the bottom.\n\nEXPANSION: the trigger must be inside this zone (or this far past the edge).\n\nRECLAIM: the swing that was taken out must be inside this zone, so a small swing in the middle of the range does not count.\n\nEXAMPLE: a formation from 100 to 120 with 25: the bottom zone is 100 to 105 and the top zone is 115 to 120.")
+locLookback = input.int(3, "Reclaim: Swing Taken Out Within (candles)", minval = 1, maxval = 20, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how recent the take out must be for a RECLAIM, counted back from the setup candle (1 = the setup candle itself, 3 = the setup candle or the 2 candles before it).\n\nA swing low (high) taken out longer ago than this is old news: price is back in the range, so a trade there is NOT A+.\n\nThe swings are found with Swing Strength below.")
 locSlope = input.bool(true, "Use the Sloped Lines", group = gLoc, active = locAny, tooltip = "WHAT: the top and bottom are sloped lines drawn right to left, like the ones you draw by hand.\n\nTOP: from the highest recent swing high back to an earlier, lower swing high, so it rises.\n\nBOTTOM: from the lowest recent swing low back to an earlier, higher swing low, so it falls.\n\nThe lines are redrawn every time a new swing confirms.\n\nOFF: the top and bottom stay flat at the highest swing high and the lowest swing low.")
 locSwing = input.int(3, "Swing Strength (candles each side)", minval = 1, maxval = 10, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how big a swing must be to count. The formation is built from the last 8 swing highs and the last 8 swing lows.\n\n3 means a swing high needs 3 lower highs on each side of it, and a swing low needs 3 higher lows on each side.\n\nA bigger number finds bigger swings and a bigger formation.\n\nA swing only counts once those candles have closed, so nothing repaints.")
 locFarAtr = input.float(8.0, "Big Formation: Let Go of a Far High or Low (ATR)", minval = 0.0, maxval = 100.0, step = 0.5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: the solid lines hold until price makes a higher high (or a lower low). One exception: when the high they connect to is more than this many average candles (ATR) from price, a new swing high that takes out the swing high right before it becomes the top instead. The same for the bottom.\n\nEXAMPLE: price falls far below an old high. The newest higher high near price becomes the top, so the line is not stuck far above.\n\n0: always move on to the newest higher high or lower low. 100: hold until taken out.")
@@ -1056,39 +1052,58 @@ if low < rgL
 // Where a signal fires in the formation. dir: 1 long, -1 short. trig: its trigger (C1 high for a long, C1 low for a short).
 // ext: the far side of the setup candle (its low for a long, its high for a short). c1Bar: the setup candle's bar.
 // st and ost: the formation state and the bigger formation's state. Returns [passes, kind, reason it was skipped].
-// v1.3.1: the trend move of the last n candles: [down move (the highest high came first), up move, highest high, lowest low].
-// A move counts when it is at least m ATR.
-trendState(int n, float m) =>
-    float hh = ta.highest(high, n)
-    float ll = ta.lowest(low, n)
-    int hb = ta.highestbars(high, n)
-    int lb = ta.lowestbars(low, n)
-    bool big = hh - ll >= m * nz(atrV, 0.0)
-    [big and lb > hb, big and hb > lb, hh, ll]
+// TheStrat Automation v2.1: the last confirmed swing high and swing low (Swing Strength, confirmed n candles later so
+// nothing repaints) and the last candle that took one out, with the level it took out. A RECLAIM needs a recent take out.
+float bsPH = ta.pivothigh(locLine ? close : high, locSwing, locSwing)
+float bsPL = ta.pivotlow(locLine ? close : low, locSwing, locSwing)
+var float bsHi = na
+var float bsLo = na
+var int tkHiBar = na
+var float tkHiLvl = na
+var int tkLoBar = na
+var float tkLoLvl = na
+if not na(bsHi) and high > bsHi
+    tkHiBar := bar_index
+    tkHiLvl := bsHi
+if not na(bsLo) and low < bsLo
+    tkLoBar := bar_index
+    tkLoLvl := bsLo
+if not na(bsPH)
+    bsHi := high[locSwing]
+if not na(bsPL)
+    bsLo := low[locSwing]
+// as they stood when the previous candle (the setup candle of this candle's signals) closed
+int tkHiBarP = tkHiBar[1]
+float tkHiLvlP = tkHiLvl[1]
+int tkLoBarP = tkLoBar[1]
+float tkLoLvlP = tkLoLvl[1]
 
-[trDn, trUp, trH, trL] = trendState(locTrendLen, locTrendAtr)
-
-// v1.3.2: Setups to Take. p: the signal passed as A+, tg: its tag. True when that setup (with or without +FLIP) is ticked.
+// v1.3.2 / v2.1: Setups to Take. p: the signal passed as A+, tg: its tag. True when that setup (with or without +FLIP) is
+// ticked. A signal that is not A+ passes here (the Broadening Formation Filter decides whether it is taken).
 tagOk(bool p, string tg) =>
     bool fl = str.contains(tg, "+FLIP")
-    not p ? tkNot : tg == "" or (str.contains(tg, "HIGH RECLAIM") or str.contains(tg, "LOW RECLAIM") ? (fl ? tkRngF : tkRng) : str.contains(tg, "RECLAIM") ? (fl ? tkRecF : tkRec) : str.contains(tg, "REVERSAL") ? (fl ? tkRevF : tkRev) : (fl ? tkExpF : tkExp))
+    not p or tg == "" or (str.contains(tg, "RECLAIM") ? (fl ? tkRecF : tkRec) : (fl ? tkExpF : tkExp))
 
-bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st) =>
+bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st, int tkBar, float tkLvl) =>
     [top, bot] = bfEdges(st, c1Bar)
     float rng = top - bot
     bool ok = rng > 0 and rng >= locMinAtr * nz(atrV, 0.0)
     float pos = 100.0 * (trig - bot) / rng
-    // v: 0 = at the edge the trade breaks through. u: 100 = the setup candle reached the edge the trade fades.
+    // v: 0 = the trigger is at the edge the trade breaks through (the top for a long, the bottom for a short)
     float v = dir == -1 ? pos : 100.0 - pos
-    float u = dir == -1 ? 100.0 * (ext - bot) / rng : 100.0 * (top - ext) / rng
+    // sw: 0 = the swing that was taken out is at the edge the trade turns away from (the bottom for a long, the top for a short)
+    float sw = dir == -1 ? 100.0 * (top - tkLvl) / rng : 100.0 * (tkLvl - bot) / rng
+    // v2.1: taken out on the setup candle or at most locLookback - 1 candles before it, and the trigger is back through it
+    bool took = not na(tkBar) and not na(tkLvl) and tkBar >= c1Bar - (locLookback - 1) and dir * (trig - tkLvl) > 0
+    string side = dir == -1 ? "top" : "bottom"
     string k = ""
     string why = ""
     if not ok
         why := "no broadening formation yet (or it is too small)"
-    else if math.abs(pos - 50) <= locMidPct / 2.0
-        why := "middle of the broadening formation"
-    else if u >= 100 - locEdgePct
-        k := (dir == -1 ? "TOP " : "BOTTOM ") + (array.get(st, dir == -1 ? 8 : 9) >= c1Bar - locLookback ? "RECLAIM" : "REVERSAL")
+    // RECLAIM: price took out a swing low at the bottom (a swing high at the top, for a short) and the trade goes back through it
+    else if took and sw <= locEdgePct
+        k := dir == -1 ? "TOP RECLAIM" : "BOTTOM RECLAIM"
+    // EXPANSION: the trigger is close to the edge the trade breaks through
     else if v <= locEdgePct and v >= -locEdgePct
         if locHtfBreak and locIn
             why := "breakout while the " + lvlName + " candle is an inside bar"
@@ -1099,19 +1114,12 @@ bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st) =>
             k := dir == -1 ? "BOTTOM EXPANSION" : "TOP EXPANSION"
     else if v < -locEdgePct
         why := "too far outside the broadening formation (chasing)"
+    else if took
+        why := "the swing " + (dir == -1 ? "high" : "low") + " it took out is not at the " + side + " of the broadening formation"
     else
-        why := "not near the top or bottom of the broadening formation"
-    // v1.3.1: trend expansion. With the trend move of the lookback (high first, then low, for a short), after a pullback of
-    // no more than locTrendPb percent of it, anywhere in the formation. Not over a breakout the rules above blocked.
-    float mv = trH - trL
-    float pbPct = mv > 0 ? 100.0 * (dir == -1 ? ext - trL : trH - ext) / mv : na
-    if locTrend and k == "" and (dir == -1 ? trDn : trUp) and pbPct <= locTrendPb
-        k := "EXPANSION"
-        why := ""
-    // what the trend test saw, added to the reason of a NOT A+ trade
-    string trTxt = not locTrend ? "" : "; trend: " + ((dir == -1 ? trDn : trUp) ? (dir == -1 ? "fall " : "rise ") + str.tostring(mv, "0.0") + " pts (" + str.tostring(mv / atrV, "0.0") + " ATR), pullback " + str.tostring(pbPct, "0") + "% (max " + str.tostring(locTrendPb) + "%)" : "no " + (dir == -1 ? "fall" : "rise") + " of " + str.tostring(locTrendAtr) + " ATR in the last " + str.tostring(locTrendLen) + " candles (" + (dir == -1 ? "high first, then low" : "low first, then high") + ")")
-    // v1.2.7: the bigger timeframe range. One side taken out within the lookback, the trigger back inside: A+ RECLAIM.
-    bool rgRec = rgOn and trig < rgH and trig > rgL and (dir == -1 ? rgUp : rgDn) >= c1Bar - locLookback
+        why := "no swing " + (dir == -1 ? "high" : "low") + " taken out in the last " + str.tostring(locLookback) + " candles, and not at the " + (dir == -1 ? "bottom" : "top") + " for an expansion (middle of the range)"
+    // v1.2.7: the bigger timeframe range. One side taken out recently (the same window), the trigger back inside: A+ RECLAIM.
+    bool rgRec = rgOn and trig < rgH and trig > rgL and (dir == -1 ? rgUp : rgDn) >= c1Bar - (locLookback - 1)
     if rgRec
         k := rgKind + (dir == -1 ? " HIGH RECLAIM" : " LOW RECLAIM")
         why := ""
@@ -1136,7 +1144,7 @@ bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st) =>
         else
             k += " | " + stTxt
             tgt := fz
-    [k != "", k, k != "" ? why : why + trTxt, tgt]
+    [k != "", k, why, tgt]
 
 // Draws a formation, each line from its own earlier swing point (bar st 3 for the top, st 7 for the bottom) through the
 // latest extreme (v1.2.2). inner: the internal or micro formation, short dashed lines that stop 3 candles past now. big:
@@ -1553,7 +1561,9 @@ for k = 0 to 3
     bool ljLong = k % 2 == 1
     int ljSig = ljPv ? (ljLong ? pvL : pvS) : (ljLong ? sigL : sigS)
     if ljSig > 0 and (ljPv ? locOn and barstate.islast : locAny)
-        [ljp, ljk, ljw, ljf] = bfJudge(ljLong ? 1 : -1, ljPv ? (ljLong ? high : low) : (ljLong ? high[1] : low[1]), ljPv ? (ljLong ? low : high) : (ljLong ? low[1] : high[1]), ljPv ? bar_index : bar_index - 1, ljPv ? locPost : locPre)
+        int ljTkB = ljPv ? (ljLong ? tkLoBar : tkHiBar) : (ljLong ? tkLoBarP : tkHiBarP)
+        float ljTkL = ljPv ? (ljLong ? tkLoLvl : tkHiLvl) : (ljLong ? tkLoLvlP : tkHiLvlP)
+        [ljp, ljk, ljw, ljf] = bfJudge(ljLong ? 1 : -1, ljPv ? (ljLong ? high : low) : (ljLong ? high[1] : low[1]), ljPv ? (ljLong ? low : high) : (ljLong ? low[1] : high[1]), ljPv ? bar_index : bar_index - 1, ljPv ? locPost : locPre, ljTkB, ljTkL)
         array.set(ljP, k, ljp)
         array.set(ljK, k, ljk)
         array.set(ljW, k, ljw)
