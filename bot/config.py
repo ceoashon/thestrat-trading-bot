@@ -70,6 +70,11 @@ class Config:
     notify_armed: bool = True
     notify_cancels: bool = False
     notify_trail: bool = True
+    # trade journal
+    journal_url: str = ""
+    journal_key: str = ""
+    journal_token: str = ""
+    journal_spool: str = "journal_queue.jsonl"
 
 
 def load_config(path: str) -> Config:
@@ -82,6 +87,7 @@ def load_config(path: str) -> Config:
     ss = raw.get("session", {})
     sv = raw.get("server", {})
     nt = raw.get("notify", {})
+    jr = raw.get("journal", {})
     d = Config()
     c = Config(
         env=tv.get("env", d.env),
@@ -130,6 +136,10 @@ def load_config(path: str) -> Config:
         notify_armed=bool(nt.get("armed", d.notify_armed)),
         notify_cancels=bool(nt.get("cancels", d.notify_cancels)),
         notify_trail=bool(nt.get("trail", d.notify_trail)),
+        journal_url=jr.get("url", d.journal_url),
+        journal_key=jr.get("key", d.journal_key),
+        journal_token=os.environ.get("JOURNAL_TOKEN", jr.get("token", d.journal_token)),
+        journal_spool=jr.get("spool", d.journal_spool),
     )
     if c.env not in ("demo", "live"):
         raise ValueError("tradovate.env must be 'demo' or 'live'")

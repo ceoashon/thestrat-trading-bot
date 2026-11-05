@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from bot.broker import DryRunBroker
 from bot.config import load_config
 from bot.engine import Engine
+from bot.journal import JournalLogger
 from bot.notify import Notifier
 from bot.server import make_server
 
@@ -45,13 +46,17 @@ def main() -> int:
         if cfg.env == "live":
             log.warning("LIVE ACCOUNT: real money")
 
-    engine = Engine(cfg, broker, cfg.state_file, notifier=notifier)
+    journal = None
+    if cfg.journal_token and not cfg.dry_run:
+        journal = JournalLogger(cfg.journal_url, cfg.journal_key, cfg.journal_token, cfg.journal_spool, notifier)
+    engine = Engine(cfg, broker, cfg.state_file, notifier=notifier, journal=journal)
     engine.startup()
-    notifier.send(f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} x{cfg.qty}, {cfg.timeframe}m, "
+    size = f"{cfg.risk_pct:g}% risk" if cfg.risk_pct > 0 else f"x{cfg.qty}"
+    notifier.send(f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} {size}, {cfg.timeframe}m, "
                   f"window {cfg.start:%H:%M}-{cfg.end:%H:%M} ET, flatten {cfg.flatten_at:%H:%M}" if cfg.flatten_at else
-                  f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} x{cfg.qty}")
+                  f"🟢 Bot started on {socket.gethostname()}: {cfg.env} {cfg.symbol} {size}")
     srv = make_server(cfg, engine)
-    log.info("trading %s x%d on %sm candles, window %s-%s %s, listening on http://%s:%d/webhook", cfg.symbol, cfg.qty,
+    log.info("trading %s %s on %sm candles, window %s-%s %s, listening on http://%s:%d/webhook", cfg.symbol, size,
              cfg.timeframe, cfg.start.strftime("%H:%M"), cfg.end.strftime("%H:%M"), cfg.timezone, cfg.host, cfg.port)
     try:
         srv.serve_forever()

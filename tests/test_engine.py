@@ -29,6 +29,9 @@ class FakeBroker:
         self.balance = 17401.06
         self.partial: dict[int, int] = {}
         self.stop_qty = None
+        self.fill_ms: dict[int, int] = {}
+        self.fees = 0.0
+        self.closing_fill = None
 
     def place_entry(self, side, qty, entry_px, stop_px, limit_px=None):
         eid, sid = self.next, self.next + 1
@@ -83,6 +86,15 @@ class FakeBroker:
     def filled_qty(self, i):
         return self.partial.get(i, 0)
 
+    def fill_time(self, i):
+        return self.fill_ms.get(i)
+
+    def order_fees(self, i):
+        return self.fees
+
+    def last_fill(self):
+        return self.closing_fill
+
     def account_balance(self):
         if self.balance is None:
             raise BrokerError("could not read the account balance")
@@ -120,13 +132,23 @@ def ms(h, m):
     return int(datetime(2026, 11, 3, h, m, tzinfo=NY).timestamp() * 1000)
 
 
+class FakeJournal:
+    def __init__(self):
+        self.trades: list[dict] = []
+
+    def log(self, trade):
+        self.trades.append(trade)
+
+
 class EngineTest(unittest.TestCase):
     def setUp(self):
         self.cfg = Config(secret="x", start=dtime(9, 30), end=dtime(16, 0), max_trades_per_day=0)
         self.b = FakeBroker()
         self.now = ms(15, 25) / 1000
         self.n = FakeNotifier()
-        self.e = Engine(self.cfg, self.b, clock=lambda: self.now, notifier=self.n)
+        self.j = FakeJournal()
+        self.e = Engine(self.cfg, self.b, clock=lambda: self.now, notifier=self.n, journal=self.j)
+        self.e.FLAT_WAIT_S = 0
 
     def bar(self, h_, m_, hi, lo, L=0, S=0, late=1.0):
         """The candle that opened at h_:m_ closes; the alert arrives `late` seconds after the close."""
@@ -408,6 +430,71 @@ class EngineTest(unittest.TestCase):
         self.bar(10, 0, 126.0, 100.0, L=3)          # limit 128.75, stop 99.75: 29 points = $58 a contract
         self.assertEqual(self.armed("long")["qty"], 15)
         self.assertIn("x15", self.n.msgs[-1])
+
+    def test_a_closed_trade_is_logged_with_its_real_numbers(self):
+        self.cfg.risk_pct = 5.0
+        self.b.fees = 15.04
+        ev = {"ev": "bar", "sym": "MNQ1!", "tf": "5", "t": ms(10, 0), "tc": ms(10, 5), "h": 126.0, "l": 100.0, "L": 3,
+              "Ln": "Failed 2-2 Reversal A+ 1H LOW RECLAIM | 3 HIGHS +FLIP"}
+        self.now = ms(10, 5) / 1000 + 1
+        self.e.handle(ev)
+        eid = self.armed("long")["entry_id"]
+        self.b.fill("long")
+        self.b.fill_ms[eid] = ms(10, 6)
+        self.bar(10, 5, 130.0, 110.0)
+        self.bar(10, 10, 140.0, 125.0)
+        tr = self.e.s["trade"]
+        self.b.orders[tr["stop_id"]]["px"] = 124.75
+        self.b.stop_out(tr["stop_id"])
+        self.b.fill_ms[tr["stop_id"]] = ms(10, 16)
+        self.bar(10, 15, 128.0, 120.0)
+        t = self.j.trades[-1]
+        self.assertEqual(t["id"], f"bot-{eid}")
+        self.assertEqual((t["direction"], t["signal"], t["grade"], t["formation"]), ("Long", "f22", "A+", "Reclaim + Flip"))
+        self.assertEqual((t["entry"], t["stop"], t["exit"], t["best"], t["qty"]), ("126.25", "99.75", "124.75", "140.0", 16))
+        self.assertEqual((t["pts"], t["gross"], t["fees"], t["pnl"], t["riskUsd"]), (-1.5, -48.0, 30.08, -78.08, 848.0))
+        self.assertEqual((t["holdMins"], t["realizedR"], t["maxR"]), (10.0, -0.057, 0.519))
+
+    def test_a_trade_stopped_in_its_entry_candle_is_logged(self):
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        a = self.armed("long")
+        self.b.fill("long")
+        self.b.orders[a["stop_id"]]["status"] = "Filled"
+        self.b.pos = 0
+        self.bar(10, 5, 130.0, 95.0)
+        self.assertEqual(self.j.trades[-1]["id"], f"bot-{a['entry_id']}")
+        self.assertEqual(self.j.trades[-1]["exit"], "99.75")
+
+    def test_a_flattened_trade_is_logged_at_its_closing_fill(self):
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        self.b.fill("long")
+        self.bar(10, 5, 130.0, 110.0)
+        self.b.closing_fill = {"order_id": 99, "price": 128.5, "ms": ms(15, 55)}
+        self.now = ms(15, 56) / 1000
+        self.e.on_timer()
+        self.assertEqual(self.j.trades[-1]["exit"], "128.5")
+        self.assertIn("flatten time", self.j.trades[-1]["notes"])
+
+    def test_flatten_without_a_closing_fill_warns(self):
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        self.b.fill("long")
+        self.bar(10, 5, 130.0, 110.0)
+        self.now = ms(15, 56) / 1000
+        self.e.on_timer()
+        self.assertEqual(self.j.trades, [])
+        self.assertTrue(any("not logged to the journal" in m for m in self.n.msgs))
+
+    def test_a_journal_problem_does_not_touch_the_trading(self):
+        def broken(trade):
+            raise OSError("disk full")
+        self.j.log = broken
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        self.b.fill("long")
+        self.bar(10, 5, 130.0, 110.0)
+        self.b.stop_out(self.e.s["trade"]["stop_id"])
+        self.bar(10, 10, 112.0, 105.0)
+        self.assertIsNone(self.e.s["trade"])
+        self.assertTrue(any("Could not log" in m for m in self.n.msgs))
 
     def test_rejection_after_arming_is_reported(self):
         self.bar(10, 0, 100.0, 90.0, L=3)

@@ -62,3 +62,9 @@ armed = true              # message when a setup is armed (the stop entry is pla
 cancels = false           # message when an entry is canceled (no break, or the other side broke first). Busy, off by default
 trail = true              # message at every stop move
 # Always sent: bot start, fills, closed trades with P&L, flatten time, skipped setups (limits, late alerts), errors.
+
+[journal]                 # optional: logs every finished trade to a Strat Trading Journal journal. Blank token = off
+url = ""                  # the journal's Supabase project address
+key = ""                  # the Supabase publishable key, the same public one the journal page uses
+token = ""                # the bot's own secret. It can only add trades to one journal (deploy/journal_bot_access.sql)
+spool = "journal_queue.jsonl"   # trades wait here until the journal has them

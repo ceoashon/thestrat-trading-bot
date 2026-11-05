@@ -51,6 +51,15 @@ class Broker(Protocol):
     def account_balance(self) -> float:
         """The account's balance in dollars. Raises BrokerError when it cannot be read."""
 
+    def fill_time(self, order_id: int) -> int | None:
+        """When an order last filled, in milliseconds, or None when unknown."""
+
+    def order_fees(self, order_id: int) -> float:
+        """The fees charged on an order's fills, in dollars."""
+
+    def last_fill(self) -> dict | None:
+        """The newest fill on this contract, as {"order_id", "price", "ms"}, or None."""
+
 
 class DryRunBroker:
     """Logs every order instead of sending it. Entries never fill, so the bot arms, cancels and re-arms."""
@@ -109,3 +118,12 @@ class DryRunBroker:
 
     def account_balance(self):
         return 50000.0
+
+    def fill_time(self, order_id):
+        return None
+
+    def order_fees(self, order_id):
+        return 0.0
+
+    def last_fill(self):
+        return None

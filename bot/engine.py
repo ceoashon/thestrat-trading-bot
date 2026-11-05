@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from .broker import LIVE_STATUSES, Broker, BrokerError, PriceAlreadyPast
 from .config import Config
+from .journal import NullJournal, build_trade
 from .notify import NullNotifier
 
 log = logging.getLogger("engine")
@@ -37,10 +38,14 @@ def _dir(side: str) -> int:
 
 
 class Engine:
-    def __init__(self, cfg: Config, broker: Broker, state_path: str | None = None, clock=None, notifier=None) -> None:
+    # how long a market close gets to fill before its price is read for the journal
+    FLAT_WAIT_S = 1.0
+
+    def __init__(self, cfg: Config, broker: Broker, state_path: str | None = None, clock=None, notifier=None, journal=None) -> None:
         self.cfg = cfg
         self.b = broker
         self.n = notifier or NullNotifier()
+        self.j = journal or NullJournal()
         self.path = state_path
         self.clock = clock or _time.time
         self.tz = ZoneInfo(cfg.timezone)
@@ -114,6 +119,36 @@ class Engine:
         self.n.send(f"🏁 **CLOSED {side.upper()}** {self.cfg.symbol} ({how}) | entry {entry} → exit {exit_px} | "
                     f"{pts:+.2f} pts x{qty} = **{self._usd(pts, qty)}** | today {self._today_pnl()}, {self.s['trades_today']} trade(s)")
 
+    def _journal_close(self, rec: dict, side: str, exit_px: float, exit_id: int, how: str) -> None:
+        """Hands a finished trade to the journal. A journal problem never touches the trading."""
+        try:
+            now_ms = int(self.clock() * 1000)
+            entry_ms = self.b.fill_time(rec["entry_id"]) or now_ms
+            exit_ms = self.b.fill_time(exit_id) or now_ms
+            try:
+                fees = self.b.order_fees(rec["entry_id"]) + self.b.order_fees(exit_id)
+            except BrokerError as e:
+                log.warning("could not read the fees of the trade: %s", e)
+                fees = None
+            self.j.log(build_trade(self.cfg, rec, side, exit_px, entry_ms, exit_ms, fees, how))
+        except Exception as e:
+            log.warning("could not log the trade to the journal: %s", e)
+            self.n.send(f"⚠️ Could not log the {side} trade to the journal: {e}")
+
+    def _journal_flat(self, tr: dict, how: str) -> None:
+        """A trade the bot closed at market: its exit is the newest fill on the contract."""
+        try:
+            _time.sleep(self.FLAT_WAIT_S)
+            last = self.b.last_fill()
+        except BrokerError as e:
+            last = None
+            log.warning("could not read the closing fill: %s", e)
+        if not last or last["order_id"] == tr["entry_id"]:
+            log.warning("the closing fill of the %s trade was not found, so it was not logged to the journal", tr["side"])
+            self.n.send(f"⚠️ The {tr['side']} trade was closed, but its closing price could not be read, so it was not logged to the journal.")
+            return
+        self._journal_close(tr, tr["side"], last["price"], last["order_id"], how)
+
     def _px(self, x: float) -> float:
         tk = self.cfg.tick_size
         return round(round(x / tk) * tk, 8)
@@ -160,6 +195,7 @@ class Engine:
             pos = self.b.net_position()
             self._sync_trade(pos, filled)
             if self.s["trade"]:
+                self._note_best(h, l)
                 self._trail(h, l)
             elif pos == 0:
                 self._arm(ev, now, h, l)
@@ -195,6 +231,8 @@ class Engine:
                 if self.s["trade"] or self.b.net_position() != 0:
                     log.info("FLATTEN TIME %s: closing the position", self.cfg.flatten_at)
                     self._flat_all()
+                    if self.s["trade"]:
+                        self._journal_flat(self.s["trade"], "flatten time")
                     self.n.send(f"🔚 Flatten time {self.cfg.flatten_at:%H:%M}: position closed at market, orders canceled | "
                                 f"today {self._today_pnl()}")
                 self.s["trade"] = None
@@ -243,21 +281,26 @@ class Engine:
                     tr = {k: a[k] for k in ("entry", "stop", "entry_id", "stop_id", "setup_t", "sig", "fill")}
                     tr["side"] = side
                     tr["qty"] = a.get("qty", self.cfg.qty)
+                    tr["first_stop"] = a["stop"]
+                    tr["late"] = a.get("late", False)
                     log.info("IN TRADE %s from %s, stop %s", side, tr["entry"], tr["stop"])
             if filled and want == 0:
                 log.info("the entry filled and the stop was hit inside the same candle")
                 for side, a in filled:
                     self._closed(side, a["fill"], self.b.fill_price(a["stop_id"]) or a["stop"], "stopped out in the entry candle",
                                  a.get("qty", self.cfg.qty))
+                    self._journal_close(a, side, self.b.fill_price(a["stop_id"]) or a["stop"], a["stop_id"], "stopped out in the entry candle")
         if tr is not None:
             if want == 0:
                 log.info("TRADE CLOSED %s: stopped out (last stop %s)", tr["side"], tr["stop"])
                 self._closed(tr["side"], tr.get("fill", tr["entry"]), self.b.fill_price(tr["stop_id"]) or tr["stop"], "stop hit",
                              tr.get("qty", self.cfg.qty))
+                self._journal_close(tr, tr["side"], self.b.fill_price(tr["stop_id"]) or tr["stop"], tr["stop_id"], "stop hit")
                 tr = None
             elif want != _dir(tr["side"]) or abs(pos) > tr.get("qty", self.cfg.qty):
                 log.error("the position (%s) does not match the %s trade: flattening", pos, tr["side"])
                 self._flat_all()
+                self._journal_flat(tr, "the position did not match the trade, so the bot closed it")
                 self.n.send(f"⚠️ The position ({pos}) did not match the {tr['side']} trade, so the bot flattened it. Check Tradovate.")
                 tr = None
             else:
@@ -265,6 +308,7 @@ class Engine:
                 if st not in LIVE_STATUSES:
                     log.error("the position is open but its stop order is %s: flattening", st)
                     self._flat_all()
+                    self._journal_flat(tr, f"its stop order was {st}, so the bot closed it")
                     self.n.send(f"⚠️ The position was open but its stop order was {st}, so the bot flattened it. Check Tradovate.")
                     tr = None
         elif want != 0:
@@ -276,6 +320,12 @@ class Engine:
                 log.error("position %s that the bot is not tracking: left alone (flatten_unknown_positions = false)", pos)
                 self.n.send(f"⚠️ Found a position ({pos}) the bot did not open on {self.cfg.symbol}. Left alone, it has no bot stop.")
         self.s["trade"] = tr
+
+    def _note_best(self, h: float, l: float) -> None:
+        tr = self.s["trade"]
+        px = h if tr["side"] == "long" else l
+        if tr.get("best") is None or (px - tr["best"]) * _dir(tr["side"]) > 0:
+            tr["best"] = px
 
     def _trail(self, h: float, l: float) -> None:
         tr = self.s["trade"]
@@ -373,7 +423,7 @@ class Engine:
                 self.n.send(f"⚠️ {side.capitalize()} entry at {entry} was not placed: {e}")
                 continue
             self.s["armed"][side] = {"entry_id": eid, "stop_id": sid, "entry": entry, "stop": stop,
-                                     "setup_t": int(ev["t"]), "sig": name, "qty": qty}
+                                     "setup_t": int(ev["t"]), "sig": name, "qty": qty, "late": late}
             if late:
                 continue
             log.info("ARMED %s %s: %s stop at %s, protective stop %s (%d ticks risk)", side.upper(), name,

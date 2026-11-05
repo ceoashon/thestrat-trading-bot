@@ -276,6 +276,25 @@ class TradovateBroker:
         rows = self._call("GET", "/fill/deps", masterid=order_id) or []
         return sum(f["qty"] for f in rows if f.get("active", True))
 
+    def fill_time(self, order_id):
+        rows = [f for f in (self._call("GET", "/fill/deps", masterid=order_id) or []) if f.get("active", True)]
+        return int(max(_ts(f["timestamp"]) for f in rows) * 1000) if rows else None
+
+    def order_fees(self, order_id):
+        total = 0.0
+        for f in self._call("GET", "/fill/deps", masterid=order_id) or []:
+            if f.get("active", True):
+                d = self._call("GET", "/fillFee/item", id=f["id"]) or {}
+                total += sum(float(v) for k, v in d.items() if k.endswith(("Fee", "commission")) and isinstance(v, (int, float)))
+        return total
+
+    def last_fill(self):
+        rows = [f for f in (self._call("GET", "/fill/list") or []) if f.get("contractId") == self.contract_id and f.get("active", True)]
+        if not rows:
+            return None
+        f = max(rows, key=lambda x: _ts(x["timestamp"]))
+        return {"order_id": f["orderId"], "price": f["price"], "ms": int(_ts(f["timestamp"]) * 1000)}
+
     def account_balance(self):
         d = self._call("POST", "/cashBalance/getcashbalancesnapshot", {"accountId": self.account_id}) or {}
         if d.get("netLiq") is None:
