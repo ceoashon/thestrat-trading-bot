@@ -18,6 +18,7 @@ class FakeTradovate(TradovateBroker):
     def __init__(self, status="Working", reports=None, status_error=False, stop_status="Suspended"):
         self.cfg = Config(secret="x")
         self.stop_status, self.flattened, self.sent = stop_status, False, None
+        self.snapshot = {"netLiq": 17401.06, "totalCashValue": 17000.0}
         self.account_spec, self.account_id = "DEMO", 1
         self.status, self.reports, self.status_error = status, reports or [], status_error
         self.canceled = []
@@ -32,6 +33,8 @@ class FakeTradovate(TradovateBroker):
             return {"ordStatus": self.stop_status if params.get("id") == 11 else self.status}
         if path == "/commandReport/deps":
             return self.reports
+        if path == "/cashBalance/getcashbalancesnapshot":
+            return self.snapshot
         if path == "/order/cancelorder":
             self.canceled.append(body["orderId"])
             return {}
@@ -74,13 +77,22 @@ class PlaceEntryTest(unittest.TestCase):
             self.place(b)
         self.assertNotIsInstance(e.exception, PriceAlreadyPast)
 
+    def test_balance_is_the_net_liquidation_value(self):
+        self.assertEqual(FakeTradovate().account_balance(), 17401.06)
+
+    def test_unreadable_balance_raises(self):
+        b = FakeTradovate()
+        b.snapshot = {"errorText": "Access is denied"}
+        with self.assertRaisesRegex(BrokerError, "Access is denied"):
+            b.account_balance()
+
     def late(self, b, side="long", limit=102.5, stop=90.0):
         return b.place_late_entry(side, 1, limit, stop)
 
     def test_late_entry_is_a_limit_that_cannot_rest(self):
         b = FakeTradovate("Filled", stop_status="Working")
         self.assertEqual(self.late(b), (10, 11))
-        self.assertEqual((b.sent["orderType"], b.sent["timeInForce"], b.sent["price"]), ("Limit", "IOC", 102.5))
+        self.assertEqual((b.sent["orderType"], b.sent["timeInForce"], b.sent["price"]), ("Limit", "FOK", 102.5))
         self.assertEqual((b.sent["action"], b.sent["bracket1"]["action"], b.sent["bracket1"]["stopPrice"]), ("Buy", "Sell", 90.0))
 
     def test_late_entry_short_sends_the_opposite_sides(self):

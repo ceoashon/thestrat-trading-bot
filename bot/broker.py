@@ -24,8 +24,8 @@ class Broker(Protocol):
         """Rests a stop entry with its protective stop attached (OSO). Returns (entry order id, stop order id)."""
 
     def place_late_entry(self, side: str, qty: int, limit_px: float, stop_px: float) -> tuple[int, int] | None:
-        """One try to enter at limit_px or better, with the protective stop attached. Whatever cannot fill at once is
-        canceled. Returns (entry order id, stop order id), or None when nothing filled."""
+        """One try to enter at limit_px or better, with the protective stop attached. The whole qty fills at once or
+        nothing does. Returns (entry order id, stop order id), or None when nothing filled."""
 
     def order_status(self, order_id: int) -> str: ...
 
@@ -44,6 +44,12 @@ class Broker(Protocol):
 
     def fill_price(self, order_id: int) -> float | None:
         """The average fill price of an order, or None when unknown."""
+
+    def filled_qty(self, order_id: int) -> int:
+        """How many contracts of an order have filled."""
+
+    def account_balance(self) -> float:
+        """The account's balance in dollars. Raises BrokerError when it cannot be read."""
 
 
 class DryRunBroker:
@@ -97,3 +103,9 @@ class DryRunBroker:
 
     def fill_price(self, order_id):
         return None
+
+    def filled_qty(self, order_id):
+        return 0
+
+    def account_balance(self):
+        return 50000.0

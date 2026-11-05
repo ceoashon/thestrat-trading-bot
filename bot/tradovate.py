@@ -160,7 +160,7 @@ class TradovateBroker:
         buy = side == "long"
         body = {
             "accountSpec": self.account_spec, "accountId": self.account_id, "action": "Buy" if buy else "Sell",
-            "symbol": self.cfg.symbol, "orderQty": qty, "orderType": "Limit", "price": limit_px, "timeInForce": "IOC",
+            "symbol": self.cfg.symbol, "orderQty": qty, "orderType": "Limit", "price": limit_px, "timeInForce": "FOK",
             "isAutomated": True,
             "bracket1": {"action": "Sell" if buy else "Buy", "orderType": "Stop", "stopPrice": stop_px, "timeInForce": "GTC"},
         }
@@ -170,7 +170,7 @@ class TradovateBroker:
         order_id, stop_id = d["orderId"], d.get("oso1Id")
         status = self._settled_status(order_id)
         if status in LIVE_STATUSES:
-            # an IOC order should never stay on the book, so make sure it does not
+            # an FOK order should never stay on the book, so make sure it does not
             if self.cancel(order_id):
                 status = "Canceled"
             else:
@@ -271,6 +271,16 @@ class TradovateBroker:
                 continue
             cash += (1 if f.get("action") == "Sell" else -1) * f["price"] * f["qty"]
         return cash * self.cfg.point_value
+
+    def filled_qty(self, order_id):
+        rows = self._call("GET", "/fill/deps", masterid=order_id) or []
+        return sum(f["qty"] for f in rows if f.get("active", True))
+
+    def account_balance(self):
+        d = self._call("POST", "/cashBalance/getcashbalancesnapshot", {"accountId": self.account_id}) or {}
+        if d.get("netLiq") is None:
+            raise BrokerError(f"could not read the account balance: {d.get('errorText', 'no balance in the answer')}")
+        return float(d["netLiq"])
 
     def fill_price(self, order_id):
         try:

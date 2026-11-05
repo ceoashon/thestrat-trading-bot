@@ -42,6 +42,8 @@ class Config:
     # risk
     direction: str = "both"
     both_sides: bool = True
+    risk_pct: float = 0.0
+    max_qty: int = 100
     setups: list[int] = field(default_factory=list)
     max_trades_per_day: int = 3
     max_daily_loss: float = 0.0
@@ -103,6 +105,8 @@ def load_config(path: str) -> Config:
         late_entry_ticks=int(od.get("late_entry_ticks", d.late_entry_ticks)),
         direction=rk.get("direction", d.direction),
         both_sides=bool(rk.get("both_sides", d.both_sides)),
+        risk_pct=float(rk.get("risk_pct", d.risk_pct)),
+        max_qty=int(rk.get("max_qty", d.max_qty)),
         setups=[int(x) for x in rk.get("setups", d.setups)],
         max_trades_per_day=int(rk.get("max_trades_per_day", d.max_trades_per_day)),
         max_daily_loss=float(rk.get("max_daily_loss", d.max_daily_loss)),

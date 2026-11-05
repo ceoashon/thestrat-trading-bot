@@ -20,7 +20,7 @@ tick_size = 0.25
 point_value = 2.0         # dollars per point: MNQ 2, NQ 20, MES 5, ES 50
 
 [orders]
-qty = 1
+qty = 1                   # contracts per trade. Not used when risk_pct is on
 entry_offset_ticks = 1    # buy stop = setup candle high + 1 tick, sell stop = setup low - 1 tick (the first trade through)
 stop_buffer_ticks = 1     # stop and every trail step = 1 tick beyond the candle's low (long) or high (short)
 entry_type = "Stop"       # "Stop" fills at market on the break. "StopLimit" caps slippage at stop_limit_ticks but can miss fast breaks
@@ -30,6 +30,8 @@ late_entry_ticks = 10     # the market passed the entry before the order arrived
 [risk]
 direction = "both"        # "both", "long" or "short"
 both_sides = true         # an inside bar can arm a long and a short at once (like the indicator). false = only the better ranked one
+risk_pct = 0.0            # contracts are sized so entry-to-stop risks this percent of the account balance, rounded down. 0 = use qty
+max_qty = 100             # the most contracts risk_pct may size a trade to. A very tight stop then risks less than risk_pct. Tradovate's demo limit is 100
 max_trades_per_day = 3    # 0 = no limit
 max_daily_loss = 300.0    # dollars of realized loss that stop new entries for the day. 0 = off
 max_stop_ticks = 0        # skip setups with a wider stop (entry to stop). 0 = off

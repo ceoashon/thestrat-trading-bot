@@ -26,11 +26,14 @@ class FakeBroker:
         self.calls: list[tuple] = []
         self.pnl = 0.0
         self.late_fills = True
+        self.balance = 17401.06
+        self.partial: dict[int, int] = {}
+        self.stop_qty = None
 
     def place_entry(self, side, qty, entry_px, stop_px, limit_px=None):
         eid, sid = self.next, self.next + 1
         self.next += 2
-        self.orders[eid] = {"status": "Working", "px": entry_px, "side": side, "stop": sid}
+        self.orders[eid] = {"status": "Working", "px": entry_px, "side": side, "stop": sid, "qty": qty}
         self.orders[sid] = {"status": "Suspended", "px": stop_px}
         self.calls.append(("place", side, entry_px, stop_px))
         return eid, sid
@@ -41,9 +44,9 @@ class FakeBroker:
             return None
         eid, sid = self.next, self.next + 1
         self.next += 2
-        self.orders[eid] = {"status": "Filled", "px": limit_px - 0.5 if side == "long" else limit_px + 0.5, "side": side, "stop": sid}
+        self.orders[eid] = {"status": "Filled", "px": limit_px - 0.5 if side == "long" else limit_px + 0.5, "side": side, "stop": sid, "qty": qty}
         self.orders[sid] = {"status": "Working", "px": stop_px}
-        self.pos += 1 if side == "long" else -1
+        self.pos += qty if side == "long" else -qty
         return eid, sid
 
     def order_status(self, i):
@@ -58,6 +61,7 @@ class FakeBroker:
 
     def modify_stop(self, i, qty, px):
         self.orders[i]["px"] = px
+        self.stop_qty = qty
         self.calls.append(("modify", i, px))
         return True
 
@@ -76,6 +80,14 @@ class FakeBroker:
     def realized_pnl_since(self, since_ms):
         return self.pnl
 
+    def filled_qty(self, i):
+        return self.partial.get(i, 0)
+
+    def account_balance(self):
+        if self.balance is None:
+            raise BrokerError("could not read the account balance")
+        return self.balance
+
     def fill_price(self, i):
         return self.orders[i]["px"] if self.orders[i]["status"] == "Filled" else None
 
@@ -84,7 +96,8 @@ class FakeBroker:
         eid = next(i for i, o in self.orders.items() if o.get("side") == side and o["status"] == "Working")
         self.orders[eid]["status"] = "Filled"
         self.orders[self.orders[eid]["stop"]]["status"] = "Working"
-        self.pos += 1 if side == "long" else -1
+        q = self.orders[eid]["qty"]
+        self.pos += q if side == "long" else -q
         return eid
 
     def stop_out(self, sid):
@@ -163,7 +176,7 @@ class EngineTest(unittest.TestCase):
         self.assertIn("at 28402.25", text)
         self.assertIn("Stop moved 28379.75 → 28394.75", text)
         self.assertIn("CLOSED LONG", text)
-        self.assertIn("-7.50 pts = **-$15.00**", text)
+        self.assertIn("-7.50 pts x1 = **-$15.00**", text)
         self.assertIn("today -$15.00", text)
 
     def test_skips_outside_the_window_are_quiet(self):
@@ -332,6 +345,69 @@ class EngineTest(unittest.TestCase):
         self.bar(10, 0, 100.0, 90.0, L=3)
         self.assertEqual(self.b.calls, [])
         self.assertIn("was not placed", self.n.msgs[-1])
+
+    def test_risk_percent_sizes_the_trade(self):
+        self.cfg.risk_pct = 5.0
+        self.bar(10, 0, 126.0, 100.0, L=3)          # 26.5 points of risk = $53 a contract, 5% of the balance = $870.05
+        self.assertEqual(self.armed("long")["qty"], 16)
+        self.assertIn("x16", self.n.msgs[-1])
+        self.assertIn("risk -$848.00", self.n.msgs[-1])
+
+    def test_a_very_tight_stop_stops_at_the_most_contracts(self):
+        self.cfg.risk_pct = 5.0
+        self.bar(10, 0, 102.0, 100.0, L=3)          # 2.5 points = $5 a contract would be 174 contracts
+        self.assertEqual(self.armed("long")["qty"], 100)
+
+    def test_a_sized_trade_runs_with_its_own_size(self):
+        self.cfg.risk_pct = 5.0
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        self.b.fill("long")
+        self.bar(10, 5, 130.0, 110.0)
+        tr = self.e.s["trade"]
+        self.assertEqual((tr["qty"], self.b.stop_qty, self.b.pos), (16, 16, 16))
+        self.assertNotIn(("flatten",), self.b.calls)
+        self.b.stop_out(tr["stop_id"])
+        self.bar(10, 10, 112.0, 105.0)
+        self.assertIn("x16 = **", self.n.msgs[-1])
+        self.assertIsNone(self.e.s["trade"])
+
+    def test_stop_too_wide_for_one_contract_is_not_taken(self):
+        self.cfg.risk_pct = 5.0
+        self.bar(10, 0, 1000.0, 100.0, L=3)
+        self.assertEqual(self.e.s["armed"], {})
+        self.assertEqual(self.b.calls, [])
+        self.assertIn("not taken", self.n.msgs[-1])
+
+    def test_unreadable_balance_places_nothing(self):
+        self.cfg.risk_pct = 5.0
+        self.b.balance = None
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        self.assertEqual(self.e.s["armed"], {})
+        self.assertEqual(self.b.calls, [])
+        self.assertIn("was not placed", self.n.msgs[-1])
+
+    def test_fixed_size_when_risk_percent_is_off(self):
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        self.assertEqual(self.armed("long")["qty"], 1)
+
+    def test_partly_filled_entry_becomes_a_trade_of_that_size(self):
+        self.cfg.risk_pct = 5.0
+        self.bar(10, 0, 126.0, 100.0, L=3)
+        a = self.armed("long")
+        self.b.partial[a["entry_id"]] = 5
+        self.b.pos = 5
+        self.bar(10, 5, 130.0, 110.0)
+        tr = self.e.s["trade"]
+        self.assertEqual((tr["qty"], self.b.stop_qty), (5, 5))
+        self.assertNotEqual(self.b.orders[a["stop_id"]]["status"], "Canceled")
+        self.assertNotIn(("flatten",), self.b.calls)
+
+    def test_late_entry_sizes_from_its_limit(self):
+        self.miss_the_break()
+        self.cfg.risk_pct = 5.0
+        self.bar(10, 0, 126.0, 100.0, L=3)          # limit 128.75, stop 99.75: 29 points = $58 a contract
+        self.assertEqual(self.armed("long")["qty"], 15)
+        self.assertIn("x15", self.n.msgs[-1])
 
     def test_rejection_after_arming_is_reported(self):
         self.bar(10, 0, 100.0, 90.0, L=3)
