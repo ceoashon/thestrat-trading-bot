@@ -32,6 +32,9 @@
 //       the rules that also rejected those trades: "too far outside (chasing)", No Breakouts While the Higher Timeframe Is
 //       an Inside Bar, Breakouts Must Stay Out, Minimum Room to the Other Side, Minimum Stops to Take Out, Minimum
 //       Formation Size, and the reclaim's "trigger back through the swing" check.
+// v2.5: A RANGE INSIDE THE RANGE IS NOT A+. The middle test also runs on the internal broadening formation (the dashed
+//       lines inside the big one): an expansion whose trigger, or a reclaim whose swing taken out, sits in the middle of
+//       the internal formation is NOT A+, even when the big formation alone called it an expansion or a reclaim.
 // The version history of the signals and filters is in TheStrat Trader V2.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -587,7 +590,7 @@ locFarAtr = input.float(8.0, "Big Formation: Let Go of a Far High or Low (ATR)",
 locSteep = input.float(0.0, "Big Formation: Steepest Line (ATR per candle)", minval = 0.0, maxval = 5.0, step = 0.05, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how a solid line picks the earlier swing it connects to. At 0 (the default) it always connects to the swing it took out that gives the flattest line, like the lines you draw by hand.\n\nAbove 0, it connects to the highest swing high (lowest swing low) it took out, unless that line climbs or drops more than this many average candles (ATR) per candle; then it takes the flattest one.\n\nThe dashed and dotted lines always use the highest swing high (lowest swing low) taken out.")
 locLine = input.bool(false, "Line Chart Swings (Find Swings on Closes)", group = gLoc, active = locAny, tooltip = "WHAT: finds the swing highs and lows on the closes, like a line chart, so single wicks do not create swings. Each line is still anchored on the wick of that candle.")
 locNear = input.float(0.0, "Present Targets Only: Hide Lines Farther Than (ATR)", minval = 0.0, maxval = 100.0, step = 1.0, group = gLoc, display = display.none, active = locAny and locDraw, tooltip = "WHAT: hides formation lines that are more than this many average candles (ATR) from price, so only the targets in play are drawn.\n\n0 shows every line.")
-locInSwing = input.int(1, "Internal Formation Swing Strength (0 = off)", minval = 0, maxval = 5, group = gLoc, display = display.none, active = locAny and locDraw, tooltip = "WHAT: the swing size of the internal formation (dashed lines) and the micro formation (yellow dotted lines) inside the big one.\n\n1 means a swing high needs 1 lower high on each side of it, so it follows the small swings.\n\nThe internal formation is only drawn. It does not change which trades are A+.\n\n0 turns it off.")
+locInSwing = input.int(1, "Internal Formation Swing Strength (0 = off)", minval = 0, maxval = 5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: the swing size of the internal formation (dashed lines), the smaller formation inside the big one, and of the micro formation (yellow dotted lines).\n\nA+: a signal in the middle of the internal formation is NOT A+ even when it sits near an edge of the big one, so a range inside the range does not pass as an expansion or a reclaim. At or past either internal edge it passes.\n\n1 means a swing high needs 1 lower high on each side of it, so it follows the small swings.\n\n0 turns the internal formation off (only the big one judges trades).")
 locMicro = input.bool(true, "Micro Formation (yellow)", group = gLoc, active = locAny and locDraw and locInSwing > 0, tooltip = "WHAT: a smaller formation inside the internal (dashed) one, drawn as short yellow dotted lines.\n\nIt follows the small higher highs and lower lows price makes while it stays inside the dashed lines.\n\nIt starts over every time the dashed formation makes a higher high or a lower low.\n\nIt is only drawn. It does not change which trades are A+.")
 colorLoc = input.color(#ffb74d, "Color: Broadening Formation Lines", group = gLoc, tooltip = "WHAT: the color of the big broadening formation lines (solid).")
 colorLocIn = input.color(#ffb74d, "Color: Internal Formation Lines", group = gLoc, tooltip = "WHAT: the color of the internal broadening formation lines (dashed).")
@@ -970,7 +973,7 @@ bfSide(array<float> hs, float p, int b, int t, array<float> st, int i, float s, 
 // starting over once price takes out the big formation's high or low (v1.2.4). Level 2: the micro formation (v1.2.4), the
 // same small swings, holding until taken out and starting over every time the internal formation moves. on0 to on2 switch
 // each level. Returns, for each level, [the state when the previous candle closed, the state now]. The internal and micro
-// formations are drawn only, never used to judge a trade.
+// formation is drawn only. v2.5: the internal formation also judges trades (bfJudge: not in its middle).
 bfScan(bool on0, bool on1, bool on2, simple int n0, simple int n1, float far0, float stp0) =>
     // v1.2.8: Line Chart Swings finds the swings on the closes, then anchors them on the wick of that candle
     float ph0 = ta.pivothigh(locLine ? close : high, n0, n0)
@@ -1029,8 +1032,10 @@ bfScan(bool on0, bool on1, bool on2, simple int n0, simple int n1, float far0, f
                 array.set(st, 13, bar_index)
     [p0, array.copy(fs0), p1, array.copy(fs1), p2, array.copy(fs2)]
 
-bool locInOn = locAny and locDraw and locInSwing > 0
-[locPre, locPost, locIPre, locIPost, locMPre, locMPost] = bfScan(locAny, locInOn, locInOn and locMicro, locSwing, math.max(locInSwing, 1), locFarAtr * nz(atrV, 0.0), locSteep * nz(atrV, 0.0))
+// v2.5: the internal formation also judges trades, so it is followed whenever the location rules are on (the micro one
+// is only drawn)
+bool locInOn = locAny and locInSwing > 0
+[locPre, locPost, locIPre, locIPost, locMPre, locMPost] = bfScan(locAny, locInOn, locInOn and locDraw and locMicro, locSwing, math.max(locInSwing, 1), locFarAtr * nz(atrV, 0.0), locSteep * nz(atrV, 0.0))
 // The last closed candle of the next timeframe up and the one before it ([1] and [2] with lookahead on never repaint).
 [locH1, locL1, locH2, locL2] = request.security(syminfo.tickerid, lvlTf, [high[1], low[1], high[2], low[2]], lookahead = barmerge.lookahead_on)
 bool locIn = hasLvl and not na(locH2) and structOf(locH2, locL2, locH1, locL1) == 1
@@ -1098,7 +1103,9 @@ tagOk(bool p, string tg) =>
 //   RECLAIM DOWN: a short right after price took out a swing high (a higher high) at the top.
 //   RECLAIM UP: a long right after price took out a swing low (a lower low) at the bottom.
 //   Everything else is in the middle of the formation and is NOT A+.
-bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st, int tkBar, float tkLvl) =>
+//   v2.5: the same middle test on the internal (smaller) formation inside it: an expansion whose trigger, or a reclaim
+//   whose swing taken out, sits in the middle of the internal formation is NOT A+ either (a range inside the range).
+bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st, int tkBar, float tkLvl, array<float> ist) =>
     [top, bot] = bfEdges(st, c1Bar)
     float rng = top - bot
     bool ok = rng > 0
@@ -1120,6 +1127,16 @@ bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st, int tkBar, f
         k := dir == -1 ? "BOTTOM EXPANSION" : "TOP EXPANSION"
     else
         why := "middle of the broadening formation: the trigger is " + str.tostring(pos, "0") + "% of the way up (an expansion " + (dir == -1 ? "down needs the bottom " : "up needs the top ") + str.tostring(locEdgePct) + "%), and no swing " + (dir == -1 ? "high at the top" : "low at the bottom") + " was taken out in the last " + str.tostring(locLookback) + " candles (for a reclaim)"
+    // v2.5: not in the middle of the internal formation. Expansion: where the trigger sits in it. Reclaim: where the swing
+    // that was taken out sits in it. Only the middle (between the two zones) is filtered: at or past either internal edge
+    // passes, and with no internal formation (reset after the big one's high or low was taken out) nothing changes.
+    [iTop, iBot] = bfEdges(ist, c1Bar)
+    float iRng = iTop - iBot
+    if k != "" and locInSwing > 0 and not na(iRng) and iRng > 0
+        float iP = 100.0 * ((str.contains(k, "EXPANSION") ? trig : tkLvl) - iBot) / iRng
+        if iP > locEdgePct and iP < 100 - locEdgePct
+            why := "middle of the internal broadening formation: the " + (str.contains(k, "EXPANSION") ? "trigger" : "swing it took out") + " is " + str.tostring(iP, "0") + "% of the way up the internal range " + priceTxt(iBot) + " to " + priceTxt(iTop) + " (the big formation alone called it " + k + ")"
+            k := ""
     // v1.2.7: the bigger timeframe range. One side taken out recently (the same window), the trigger back inside: A+ RECLAIM.
     bool rgRec = rgOn and trig < rgH and trig > rgL and (dir == -1 ? rgUp : rgDn) >= c1Bar - (locLookback - 1)
     if rgRec
@@ -1556,7 +1573,7 @@ for k = 0 to 3
     if ljSig > 0 and (ljPv ? locOn and barstate.islast : locAny)
         int ljTkB = ljPv ? (ljLong ? tkLoBar : tkHiBar) : (ljLong ? tkLoBarP : tkHiBarP)
         float ljTkL = ljPv ? (ljLong ? tkLoLvl : tkHiLvl) : (ljLong ? tkLoLvlP : tkHiLvlP)
-        [ljp, ljk, ljw, ljf] = bfJudge(ljLong ? 1 : -1, ljPv ? (ljLong ? high : low) : (ljLong ? high[1] : low[1]), ljPv ? (ljLong ? low : high) : (ljLong ? low[1] : high[1]), ljPv ? bar_index : bar_index - 1, ljPv ? locPost : locPre, ljTkB, ljTkL)
+        [ljp, ljk, ljw, ljf] = bfJudge(ljLong ? 1 : -1, ljPv ? (ljLong ? high : low) : (ljLong ? high[1] : low[1]), ljPv ? (ljLong ? low : high) : (ljLong ? low[1] : high[1]), ljPv ? bar_index : bar_index - 1, ljPv ? locPost : locPre, ljTkB, ljTkL, ljPv ? locIPost : locIPre)
         array.set(ljP, k, ljp)
         array.set(ljK, k, ljk)
         array.set(ljW, k, ljw)
