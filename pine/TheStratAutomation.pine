@@ -24,6 +24,8 @@
 //       Stay Out: one old failed breakout, even against an older line, blocked every expansion that way until price closed
 //       outside again (TheStrat Trader V2 hid this because Trend Expansion overrode the block). Now only a failure of the
 //       line as it is drawn now and in the last 30 candles blocks, and a blocked trade says how many candles ago it failed.
+// v2.3: SHOW SKIPPED SIGNALS (11. Chart), ON by default: a grey x where a switched-on signal triggered but no trade was
+//       taken, with the reason on hover. No x means the signal is switched off in this indicator's own settings.
 // The version history of the signals and filters is in TheStrat Trader V2.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -681,6 +683,7 @@ showPlannedRR = input.bool(false, "Signal Label: Show Planned Risk and Reward", 
 showArmed = input.bool(false, "Watch: Show the Setup Waiting to Trigger", group = gDraw, tooltip = "WHAT: when a signal setup has just formed and no trade is open, draws a dotted Watch line at the trigger and says what is needed, or why a signal was skipped.\n\nON THE CHART: ON adds the line and a label like 'waiting for price to break below 20,010.25'. OFF hides them.")
 showArrows = input.bool(false, "Entry Arrows on the Candles", group = gDraw, tooltip = "WHAT: the big triangles under (long) and over (short) the entry candle, and the small ADD arrows.\n\nON THE CHART: OFF by default because the Buy / Sell tag already marks the entry. ON draws them.")
 showMarkers = input.bool(false, "First Target and Exit Markers", group = gDraw, tooltip = "WHAT: a small diamond where the First Target was hit and an X where a trade or a part of it exited.\n\nON THE CHART: OFF by default. ON draws them.")
+showSkipped = input.bool(true, "Show Skipped Signals (Why Not)", group = gDraw, tooltip = "WHAT: a small grey x where one of your switched-on signals triggered but no trade was taken. Hover it to see why, for example NOT A+ and the rule that skipped it (no swing taken out, middle of the range, failed breakout, higher timeframe inside bar), timeframes do not agree (FTFC), stop size, or a trade was still open.\n\nNO x at a setup you expected means that signal is switched off in 3. Actionable Signals of THIS indicator. TheStrat Automation has its own settings; it does not copy the ones you set in TheStrat Trader V2.\n\nON THE CHART: the latest 20. ON by default while you set up; switch it off for a clean chart.")
 
 // -------------------- 12. CHART: PRICE LABELS AND R TAGS --------------------
 showLblEntry = input.bool(false, "Label: Entry Price", group = gLines, active = showTrades, tooltip = "WHAT: a small label at the right edge with your entry price, like ENTRY 30645.00.\n\nON THE CHART: ON shows it. OFF hides it.")
@@ -749,7 +752,7 @@ int spN = (sp1Ok ? 1 : 0) + (sp2Ok ? 1 : 0)
 int tocLines = (showEntryLine ? 1 : 0) + (showSLLine ? 1 : 0) + (showTP1Line ? 1 : 0) + (showTP2Line ? 1 : 0) + (showBestLine ? 1 : 0) + (showExitLine ? 1 : 0)
 int tocPoly = (showStopPath ? 1 : 0) + (showSPLines and spN > 0 and not rrMode ? 2 : 0)
 int tocLabels = (showSignalLabel ? 1 : 0) + (showLblEntry ? 1 : 0) + (showLblSL ? 1 : 0) + (showLblTP1 ? 1 : 0) + (showLblTP2 ? 1 : 0) + (showMaxTag ? 1 : 0) + (showRealTag ? 1 : 0) + (showSPLines and spN > 0 and not rrMode ? 2 : 0)
-int locFix = locAny and locDraw ? 8 : 0
+int locFix = (locAny and locDraw ? 8 : 0) + (showSkipped ? 20 : 0)
 int tradesOnChart = int(math.floor(math.max(5, math.min(60, math.min(math.min(tocLines > 0 ? (440.0 - locFix) / tocLines : 60.0, tocLabels > 0 ? (440.0 - locFix) / tocLabels : 60.0), tocPoly > 0 ? 100.0 / tocPoly : 60.0)))))
 float spBuf = trailBufTicks * tick
 // The reference candle(s) of each protocol timeframe: always the FINISHED candle(s) before the current one, so a trail
@@ -2332,6 +2335,11 @@ if barstate.islast
                     color legCol = lg == 0 ? colorStopPath : (legSlot == 1 ? colorSP1 : colorSP2)
                     string legTag = lg == 0 ? "" : (lg == 1 ? pt.l1Name : pt.l2Name) + " trail"
                     flushPath(pts, legEnd, prevP, legCol, drawnPolys, lg == 0 ? 4 : 2, legTag, drawnLabels, tagSz, colorTag)
+    // v2.3: why a switched-on signal did not become a trade (Show Skipped Signals)
+    if showSkipped and array.size(skT) > 0
+        int skN = array.size(skT)
+        for skI = math.max(0, skN - 20) to skN - 1
+            array.push(drawnLabels, label.new(array.get(skT, skI), array.get(skP, skI), "×", xloc = xloc.bar_time, style = label.style_label_center, color = color.new(color.black, 100), textcolor = color.gray, size = size.normal, tooltip = "Skipped " + str.format_time(array.get(skT, skI), "HH:mm", "America/New_York") + " NY at " + priceTxt(array.get(skP, skI)) + "\n" + array.get(skR, skI)))
     // the setup waiting to trigger
     if showArmed and array.size(openTrades) == 0
         if sigS > 0 and allowShort
