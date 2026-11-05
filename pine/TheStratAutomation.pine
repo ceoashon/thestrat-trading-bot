@@ -39,6 +39,10 @@
 //       after it) is INTERNAL BOTTOM RECLAIM, not TOP EXPANSION (the mirror for a short: INTERNAL TOP RECLAIM). (2) LOWER
 //       TIMEFRAMES NEED A HIGHER TIMEFRAME SIGNAL (section 4, ON): under 5 minutes, an A+ trade also needs an inside bar, a
 //       failed 2 or a hammer / shooter on the 5 minute chart pointing the same way, not broken the other way yet.
+// v2.7: POSITION DECIDES A+, NOTHING OVERRULES IT BY DEFAULT. (1) Lower Timeframes Need a Higher Timeframe Signal is OFF
+//       by default (it removed true expansions on the 1 minute), and when ON a 5 minute continuation the same way (2 up /
+//       3 up for a long, 2 down / 3 down for a short) counts too. (2) INTERNAL RECLAIM is a name only: it renames an A+
+//       expansion taken right after the swings broadened, and never makes a trade A+ by itself.
 // The version history of the signals and filters is in TheStrat Trader V2.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -579,13 +583,13 @@ tooCloseMode = "Use the next target"
 
 // -------------------- 4. BROADENING FORMATIONS (A+ ZONES): setups to take, trend expansion, range, A+ rules, lines, colors --------------------
 tkRec = input.bool(true, "Take: Reclaim", group = gLoc, inline = "tk1", active = locAny)
-tkRecF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk1", active = locAny, tooltip = "SETUPS TO TAKE: the two A+ setups. Tick the ones you want. A signal whose setup is not ticked is skipped (no trade, no alert, no bot message).\n\nRECLAIM: price took out a swing low at the bottom of the broadening formation (a swing high at the top, for a short) on the setup candle or just before it. Also INTERNAL BOTTOM RECLAIM: a higher high, then a lower low under the swing low after it, and the long goes back up (INTERNAL TOP RECLAIM: a lower low, then a higher high, for a short). And a reclaim of the bigger timeframe high or low (the flat lines, for example 1H LOW RECLAIM).\n\n+ FLIP: the same setup on a candle where two or more continuity timeframes open together with full continuity. Reclaim alone and Reclaim +FLIP can be picked apart.")
+tkRecF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk1", active = locAny, tooltip = "SETUPS TO TAKE: the two A+ setups. Tick the ones you want. A signal whose setup is not ticked is skipped (no trade, no alert, no bot message).\n\nRECLAIM: price took out a swing low at the bottom of the broadening formation (a swing high at the top, for a short) on the setup candle or just before it. An A+ expansion taken right after the swings broadened (a higher high, then a lower low under the swing low after it, for a long) is named INTERNAL BOTTOM RECLAIM (INTERNAL TOP RECLAIM for a short), and is ticked here. And a reclaim of the bigger timeframe high or low (the flat lines, for example 1H LOW RECLAIM).\n\n+ FLIP: the same setup on a candle where two or more continuity timeframes open together with full continuity. Reclaim alone and Reclaim +FLIP can be picked apart.")
 tkExp = input.bool(true, "Take: Expansion", group = gLoc, inline = "tk2", active = locAny)
 tkExpF = input.bool(true, "+ FLIP", group = gLoc, inline = "tk2", active = locAny, tooltip = "EXPANSION: a breakout at the edge of the formation. The trigger sits close to the top (a long, TOP EXPANSION) or the bottom (a short, BOTTOM EXPANSION), so the break takes out that high or low and keeps going. + FLIP: the same setup on a flip candle.\n\nEverything else is in the middle of the formation: NOT A+, skipped by the filter.")
 locRngTf = input.string("Auto", "Range: Bigger Timeframe", options = ["Off", "Auto", "15", "60", "240", "720", "D", "W"], group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: the range you are trading back through: the high and low of the previous candle of this timeframe. When that candle is an inside bar, its mother bar is used instead.\n\nON THE CHART: two horizontal lines with their names, for example 1H HIGH and 1H LOW.\n\nA+: price takes out one side, then the setup triggers back inside. A short after the high was taken out is A+ 1H HIGH RECLAIM, and its target is the low.\n\nAUTO: 1H on charts up to 5 minutes, 4H up to 30 minutes, Daily up to 4 hours, Weekly above that. Off turns the range off.")
 locRngDraw = input.bool(true, "Range: Draw the Bigger Timeframe High and Low", group = gLoc, active = locAny and locDraw and locRngTf != "Off", tooltip = "WHAT: shows or hides the bigger timeframe high and low lines (the flat purple lines, for example 1H HIGH and 1H LOW).\n\nON THE CHART: OFF removes the two lines and their price labels.\n\nEXAMPLE: turn it off to clean up the chart. A+ 1H HIGH RECLAIM and 1H LOW RECLAIM trades are still tagged and taken, only the lines are hidden.")
 locNeedFlip = input.bool(false, "A+ Needs a Continuity FLIP", group = gLoc, active = locAny, tooltip = "WHAT: an A+ trade on a candle where two or more continuity timeframes opened a new candle together, with full continuity, is tagged +FLIP.\n\nON: only those trades are A+.\n\nOFF: the tag is shown, nothing is filtered.")
-locHtfSig = input.bool(true, "Lower Timeframes Need a Higher Timeframe Signal", group = gLoc, active = locAny, tooltip = "WHAT: on charts under 5 minutes (1 minute, seconds), an A+ trade also needs an actionable signal on the next timeframe up (5 minutes) pointing the same way, so a naked 1 minute signal against the 5 minute picture is not taken.\n\nACTIONABLE SIGNAL: the last closed 5 minute candle is an inside bar (1), a failed 2 (a failed 2 down for a long, a failed 2 up for a short), a hammer (long) or a shooter (short), and the 5 minute candle forming now has not broken it the other way (below its low for a long, above its high for a short). Any of these counts, whatever is switched on in 3. Actionable Signals.\n\nON THE CHART: the tag names it, for example A+ TOP EXPANSION | 5m inside bar. Without one the trade is NOT A+ and the skip reason says so.\n\n5 minutes and higher: not used.")
+locHtfSig = input.bool(false, "Lower Timeframes Need a Higher Timeframe Signal", group = gLoc, active = locAny, tooltip = "OFF BY DEFAULT. An extra quality filter for charts under 5 minutes (1 minute, seconds), on top of the position rules. ON: an A+ trade also needs an actionable signal on the 5 minute chart pointing the same way.\n\nACTIONABLE SIGNAL: the last closed 5 minute candle is an inside bar (1), a failed 2 (a failed 2 down for a long, a failed 2 up for a short), a hammer (long) or a shooter (short), or a continuation the same way (a 2 up or a 3 that closed up for a long, a 2 down or a 3 that closed down for a short). And the 5 minute candle forming now has not broken it the other way.\n\nON THE CHART: the tag names it, for example A+ BOTTOM EXPANSION | 5m 2 down. Without one the trade is NOT A+ and the skip reason says so.\n\nOFF: only the position in the broadening formations decides A+. 5 minutes and higher: never used.")
 locTgtOpp = input.bool(true, "Target the Other Side", group = gLoc, active = locAny, tooltip = "WHAT: an A+ RECLAIM (a trade back through a range or formation) aims its First Target at the other side: the far side of the bigger timeframe range, or the opposite line of the formation, when that is farther than its own First Target.\n\nIts reward to risk is measured again with the new target.\n\nOFF: the First Target comes from the signal as in Strat Trader.")
 locEdgePct = input.int(25, "Top and Bottom Zones (% of the formation)", minval = 5, maxval = 45, step = 5, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how close to the top or bottom counts as near the top or near the bottom. Everything between the two zones is the middle, and signals there are NOT A+ (that is where trades get chopped up).\n\nEXPANSION: the trigger is in the zone it breaks through, or already past that line.\n\nRECLAIM: the swing high (low) that was just taken out is in the top (bottom) zone, or past that line (a new higher high or lower low).\n\nEXAMPLE: a formation from 100 to 120 with 25: the bottom zone is 100 to 105, the top zone 115 to 120, the middle 105 to 115.")
 locLookback = input.int(3, "Reclaim: Swing Taken Out Within (candles)", minval = 1, maxval = 20, group = gLoc, display = display.none, active = locAny, tooltip = "WHAT: how recent the take out must be for a RECLAIM, counted back from the setup candle (1 = the setup candle itself, 3 = the setup candle or the 2 candles before it).\n\nA swing low (high) taken out longer ago than this is old news: price is back in the range, so a trade there is NOT A+.\n\nThe swings are found with Swing Strength below.")
@@ -1060,8 +1064,8 @@ else
 // A higher timeframe candle p against the candle q before it: [the long setup it is, the short setup it is] ("" = none).
 htfSetup(float pO, float pH, float pL, float pC, float qH, float qL) =>
     int hs = structOf(qH, qL, pH, pL)
-    string up = hs == 1 ? "inside bar" : hs == -2 and pC > pO ? "failed 2 down" : isHammer(pO, pH, pL, pC, hsWickPct) ? "hammer" : ""
-    string dn = hs == 1 ? "inside bar" : hs == 2 and pC < pO ? "failed 2 up" : isShooter(pO, pH, pL, pC, hsWickPct) ? "shooter" : ""
+    string up = hs == 1 ? "inside bar" : hs == -2 and pC > pO ? "failed 2 down" : isHammer(pO, pH, pL, pC, hsWickPct) ? "hammer" : hs == 2 and pC >= pO ? "2 up" : hs == 3 and pC > pO ? "3 up" : ""
+    string dn = hs == 1 ? "inside bar" : hs == 2 and pC < pO ? "failed 2 up" : isShooter(pO, pH, pL, pC, hsWickPct) ? "shooter" : hs == -2 and pC <= pO ? "2 down" : hs == 3 and pC < pO ? "3 down" : ""
     [up, dn]
 [htUpNm, htDnNm] = htfSetup(htO1, locH1, locL1, htC1, locH2, locL2)
 [htUpNx, htDnNx] = htfSetup(htNowO, htNowH, htNowL, close, locH1, locL1)
@@ -1168,10 +1172,6 @@ bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st, int tkBar, f
         why := "no broadening formation yet"
     else if took and sw <= locEdgePct
         k := dir == -1 ? "TOP RECLAIM" : "BOTTOM RECLAIM"
-    // v2.6: the swing structure broadened (a higher high, then a lower low under the swing low after it, for a long) and the
-    // trade goes back through: a RECLAIM of that smaller broadening formation, wherever it sits in the big one
-    else if took and tkInt
-        k := dir == -1 ? "INTERNAL TOP RECLAIM" : "INTERNAL BOTTOM RECLAIM"
     else if v <= locEdgePct
         k := dir == -1 ? "BOTTOM EXPANSION" : "TOP EXPANSION"
     else
@@ -1181,11 +1181,16 @@ bfJudge(int dir, float trig, float ext, int c1Bar, array<float> st, int tkBar, f
     // passes, and with no internal formation (reset after the big one's high or low was taken out) nothing changes.
     [iTop, iBot] = bfEdges(ist, c1Bar)
     float iRng = iTop - iBot
-    if k != "" and not str.contains(k, "INTERNAL") and locInSwing > 0 and not na(iRng) and iRng > 0
+    if k != "" and locInSwing > 0 and not na(iRng) and iRng > 0
         float iP = 100.0 * ((str.contains(k, "EXPANSION") ? trig : tkLvl) - iBot) / iRng
         if iP > locEdgePct and iP < 100 - locEdgePct
             why := "middle of the internal broadening formation: the " + (str.contains(k, "EXPANSION") ? "trigger" : "swing it took out") + " is " + str.tostring(iP, "0") + "% of the way up the internal range " + priceTxt(iBot) + " to " + priceTxt(iTop) + " (the big formation alone called it " + k + ")"
             k := ""
+    // v2.7: a NAME, never a filter. A trade that is already A+ as an expansion by its position, taken right after the swings
+    // broadened (a higher high, then a lower low under the swing low after it, for a long; the mirror for a short), is
+    // called a reclaim of that smaller formation. Whether it is A+ is still decided by position only.
+    if str.contains(k, "EXPANSION") and took and tkInt
+        k := dir == -1 ? "INTERNAL TOP RECLAIM" : "INTERNAL BOTTOM RECLAIM"
     // v1.2.7: the bigger timeframe range. One side taken out recently (the same window), the trigger back inside: A+ RECLAIM.
     bool rgRec = rgOn and trig < rgH and trig > rgL and (dir == -1 ? rgUp : rgDn) >= c1Bar - (locLookback - 1)
     if rgRec
@@ -1651,7 +1656,7 @@ for k = 0 to 3
             array.set(ljK, k, array.get(ljK, k) + " | " + lvlName + " " + hNm)
         else
             array.set(ljP, k, false)
-            array.set(ljW, k, "no " + lvlName + " actionable signal " + (hLong ? "up (an inside bar, a failed 2 down or a hammer" : "down (an inside bar, a failed 2 up or a shooter") + " that the " + lvlName + " candle has not broken the other way)")
+            array.set(ljW, k, "no " + lvlName + " actionable signal " + (hLong ? "up (an inside bar, a failed 2 down, a hammer, a 2 up or a 3 up" : "down (an inside bar, a failed 2 up, a shooter, a 2 down or a 3 down") + " that the " + lvlName + " candle has not broken the other way)")
 // v1.2.9: Target the Other Side. An A+ RECLAIM or REVERSAL aims its First Target at the other side when that is farther,
 // then its reward to risk is measured again and the Final Target stays beyond it.
 float oSide = array.get(ljF, 0)
