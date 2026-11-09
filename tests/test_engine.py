@@ -627,3 +627,142 @@ class SuccessProtocolTest(unittest.TestCase):
     def test_the_armed_message_says_so(self):
         self.spbar(10, 0, 28402.0, 28380.0, sph=28450.0, spl=28300.0, L=3)
         self.assertIn("trails the 240 candles (Success Protocol)", "\n".join(self.n.msgs))
+
+
+class MissingCandlesTest(unittest.TestCase):
+    """TradingView's own-timeframe alert going quiet during a trade: one Discord warning, and with backup_timeframe set
+    the stop keeps trailing on the backup alert's candles until the bot's own come back."""
+
+    def make(self, tf, backup=""):
+        self.cfg = Config(secret="x", start=dtime(9, 30), end=dtime(16, 0), max_trades_per_day=0, timeframe=tf,
+                          backup_timeframe=backup)
+        self.b, self.n, self.j = FakeBroker(), FakeNotifier(), FakeJournal()
+        self.now = ms(9, 30) / 1000
+        self.e = Engine(self.cfg, self.b, clock=lambda: self.now, notifier=self.n, journal=self.j)
+        self.e.FLAT_WAIT_S = 0
+
+    def candle(self, tf, h_, m_, hi, lo, L=0, S=0, **extra):
+        size = int(tf) * 60_000
+        t = ms(h_, m_)
+        self.now = (t + size) / 1000 + 1
+        self.e.handle({"ev": "bar", "sym": "MNQ1!", "tf": tf, "t": t, "tc": t + size, "h": hi, "l": lo, "L": L, "S": S, **extra})
+
+    def at(self, h_, m_, s=0):
+        self.now = ms(h_, m_) / 1000 + s
+        self.e.on_timer()
+
+    def warnings(self):
+        return [m for m in self.n.msgs if m.startswith("⚠️ No ")]
+
+    def short_trade_on_1m(self):
+        # the Nov 5 22:35 short, on 1 minute candles with a 5 minute backup
+        self.make("1", backup="5")
+        self.candle("1", 10, 0, 27002.5, 26991.75, S=1)
+        self.b.fill("short")
+        self.candle("1", 10, 1, 26993.75, 26956.75)
+        self.assertEqual(self.e.s["trade"]["stop"], 26994.0)
+
+    def test_a_quiet_alert_during_a_trade_warns_once(self):
+        self.short_trade_on_1m()
+        self.at(10, 4, 0)                     # the 10:01 candle came at 10:02:01; the next is due 10:03:01, + 60 s: not yet
+        self.assertEqual(self.warnings(), [])
+        self.at(10, 4, 5)
+        self.at(10, 4, 30)
+        self.assertEqual(len(self.warnings()), 1)
+        self.assertIn("short trade's stop is stuck at 26994.0", self.warnings()[0])
+        self.assertIn("trails on the 5m candles", self.warnings()[0])
+        self.candle("1", 10, 20, 26960.0, 26950.0)
+        self.assertIn("1m candles from TradingView are arriving again", self.n.msgs[-2] + self.n.msgs[-1])
+
+    def test_no_warning_while_flat(self):
+        self.make("1")
+        self.candle("1", 10, 0, 100.0, 90.0)
+        self.at(11, 0)
+        self.assertEqual(self.warnings(), [])
+
+    def test_the_backup_candles_are_ignored_while_the_own_ones_arrive(self):
+        self.short_trade_on_1m()
+        self.candle("1", 10, 2, 26990.0, 26950.0)
+        self.candle("1", 10, 3, 26985.0, 26950.0)
+        n = len(self.b.calls)
+        self.candle("1", 10, 4, 26987.0, 26950.0)
+        self.candle("5", 10, 0, 26950.25, 26940.0)     # arrives with the 10:04 one: not used
+        self.assertEqual(self.b.calls[n:], [])
+        self.assertEqual(self.e.s["trade"]["stop"], 26985.25)
+
+    def test_a_bigger_backup_trails_while_the_own_candles_are_missing(self):
+        self.short_trade_on_1m()
+        # the 1 minute alert goes quiet after 10:02; the 5 minute one keeps coming
+        self.candle("5", 10, 0, 27002.75, 26956.75)    # its high is above the stop: never loosens it
+        self.assertEqual(self.e.s["trade"]["stop"], 26994.0)
+        self.candle("5", 10, 5, 26975.0, 26940.0)
+        self.assertEqual(self.e.s["trade"]["stop"], 26975.25)
+        self.candle("5", 10, 10, 26960.0, 26930.0)
+        self.assertEqual(self.e.s["trade"]["stop"], 26960.25)
+        self.assertEqual(len(self.warnings()), 1)
+        # the 1 minute candles are back: they trail again as before
+        self.candle("1", 10, 15, 26950.0, 26925.0)
+        self.assertEqual(self.e.s["trade"]["stop"], 26950.25)
+
+    def test_a_smaller_backup_is_grouped_into_full_candles(self):
+        self.make("15", backup="5")
+        self.candle("15", 10, 0, 28402.0, 28380.0, L=3)
+        self.b.fill("long")
+        self.candle("15", 10, 15, 28440.0, 28395.0)
+        tr = self.e.s["trade"]
+        self.assertEqual(tr["stop"], 28394.75)
+        # the 10:30 15 minute candle never arrives; its three 5 minute candles do
+        self.candle("5", 10, 30, 28450.0, 28420.0)
+        self.candle("5", 10, 35, 28460.0, 28410.0)
+        self.candle("5", 10, 40, 28470.0, 28430.0)
+        self.assertEqual(tr["stop"], 28394.75)          # 10:45:01: the own candle is not late yet
+        self.at(10, 46, 5)
+        self.assertEqual(self.e.s["trade"]["stop"], 28409.75)   # the group's low 28410 - 1 tick, as the 15 minute candle
+        # a group with one 5 minute candle missing is not used
+        self.candle("5", 10, 45, 28480.0, 28440.0)
+        self.candle("5", 10, 55, 28490.0, 28450.0)
+        self.at(11, 1, 5)
+        self.assertEqual(self.e.s["trade"]["stop"], 28409.75)
+
+    def test_the_own_candle_arriving_late_but_in_time_wins(self):
+        self.make("15", backup="5")
+        self.candle("15", 10, 0, 28402.0, 28380.0, L=3)
+        self.b.fill("long")
+        self.candle("15", 10, 15, 28440.0, 28395.0)
+        for m in (30, 35, 40):
+            self.candle("5", 10, m, 28450.0, 28410.0)
+        self.candle("15", 10, 30, 28450.0, 28410.0)
+        n = len(self.b.calls)
+        self.at(11, 0)
+        self.assertEqual(self.b.calls[n:], [])
+        self.assertEqual(self.warnings(), [])
+
+    def test_a_stop_hit_during_the_gap_closes_the_trade(self):
+        self.short_trade_on_1m()
+        self.b.stop_out(self.e.s["trade"]["stop_id"])
+        n = len(self.b.calls)
+        self.candle("5", 10, 5, 26995.0, 26940.0)
+        self.assertIsNone(self.e.s["trade"])
+        self.assertNotIn("modify", [c[0] for c in self.b.calls[n:]])
+        self.assertTrue(any("CLOSED SHORT" in m for m in self.n.msgs))
+
+    def test_a_success_protocol_trade_uses_the_backups_higher_timeframe(self):
+        self.make("15", backup="5")
+        self.candle("15", 10, 0, 28402.0, 28380.0, L=3, sptf="240", spn=1, sph=28450.0, spl=28300.0)
+        self.b.fill("long")
+        self.candle("15", 10, 15, 28440.0, 28395.0, sptf="240", spn=1, sph=28450.0, spl=28300.0)
+        for m in (30, 35, 40):
+            self.candle("5", 10, m, 28470.0, 28430.0, sptf="240", spn=1, sph=28470.0, spl=28420.0)
+        self.at(10, 47)
+        self.assertEqual(self.e.s["trade"]["stop"], 28419.75)
+
+    def test_a_backup_that_does_not_fit_the_timeframe_is_refused(self):
+        import tempfile
+        from bot.config import load_config
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write('[instrument]\ntimeframe = "15"\nbackup_timeframe = "7"\n[server]\nsecret = "x"\n')
+        try:
+            with self.assertRaises(ValueError):
+                load_config(f.name)
+        finally:
+            os.unlink(f.name)

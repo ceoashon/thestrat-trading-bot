@@ -34,6 +34,8 @@ class Config:
     symbol: str = "MNQZ6"
     tv_tickers: list[str] = field(default_factory=lambda: ["MNQ1!", "NQ1!"])
     timeframe: str = "5"
+    backup_timeframe: str = ""   # a second alert's timeframe, used only to trail a trade while the bot's own candles are missing. "" = off
+    candle_grace_s: float = 60   # a candle counts as missing this many seconds after it should have closed
     tick_size: float = 0.25
     point_value: float = 2.0
     big_symbol: str = ""
@@ -120,6 +122,8 @@ def load_config(path: str) -> Config:
         symbol=ins.get("symbol", d.symbol),
         tv_tickers=list(ins.get("tv_tickers", d.tv_tickers)),
         timeframe=str(ins.get("timeframe", d.timeframe)),
+        backup_timeframe=str(ins.get("backup_timeframe", d.backup_timeframe)),
+        candle_grace_s=float(ins.get("candle_grace_s", d.candle_grace_s)),
         tick_size=float(ins.get("tick_size", d.tick_size)),
         point_value=float(ins.get("point_value", d.point_value)),
         big_symbol=ins.get("big_symbol", d.big_symbol),
@@ -178,6 +182,11 @@ def load_config(path: str) -> Config:
         raise ValueError("risk.direction must be 'both', 'long' or 'short'")
     if c.entry_type not in ("Stop", "StopLimit"):
         raise ValueError("orders.entry_type must be 'Stop' or 'StopLimit'")
+    if c.backup_timeframe:
+        a, b = c.timeframe, c.backup_timeframe
+        if not (a.isdigit() and b.isdigit()) or a == b or max(int(a), int(b)) % min(int(a), int(b)):
+            raise ValueError("instrument.backup_timeframe must be minutes, not the bot's timeframe, and a whole multiple "
+                             "or a whole part of it (5 for a 15 minute bot, 5 for a 1 minute bot)")
     if c.secret in ("", "change-me"):
         raise ValueError("set server.secret (or BOT_SECRET) to your own password, the same one as in the indicator")
     return c

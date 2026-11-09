@@ -11,6 +11,9 @@ At every candle close (a "bar" message from the indicator):
      the entry fills).
 A "cancel" message during the candle cancels a side once the other side of the setup candle broke first.
 A timer flattens everything at the flatten time.
+Missing candles: while a trade is open (or an entry waits) and the bot's own candle is more than candle_grace_s late,
+Discord gets one warning. With backup_timeframe set, that second alert's candles (grouped into candles of the bot's own
+timeframe when they are smaller) trail the stop until the bot's own candles come back.
 """
 from __future__ import annotations
 
@@ -56,7 +59,8 @@ class Engine:
     # ---------------------------------------------------------------- state
     @staticmethod
     def _blank() -> dict:
-        return {"last_bar_t": 0, "armed": {}, "trade": None, "day": "", "trades_today": 0, "flattened_day": ""}
+        return {"last_bar_t": 0, "armed": {}, "trade": None, "day": "", "trades_today": 0, "flattened_day": "",
+                "last_bar_at": 0.0, "gap_warned": False, "backup": None, "backup_t": 0, "backup_done": []}
 
     def _load(self) -> dict:
         s = self._blank()
@@ -165,10 +169,15 @@ class Engine:
         if self.cfg.tv_tickers and ev.get("sym") not in self.cfg.tv_tickers:
             log.warning("ignored a message from chart %s (not in tv_tickers %s)", ev.get("sym"), self.cfg.tv_tickers)
             return
+        kind = ev.get("ev")
         if str(ev.get("tf")) != self.cfg.timeframe:
+            if self.cfg.backup_timeframe and str(ev.get("tf")) == self.cfg.backup_timeframe:
+                if kind == "bar":
+                    self.on_backup_bar(ev)
+                    self.on_timer()
+                return
             log.warning("ignored a message from timeframe %s (the bot trades %s)", ev.get("tf"), self.cfg.timeframe)
             return
-        kind = ev.get("ev")
         if kind == "bar":
             self.on_bar(ev)
         elif kind == "cancel":
@@ -181,6 +190,8 @@ class Engine:
         """Make the saved state agree with the account before taking new messages."""
         with self.lock:
             self._roll_day(self._now())
+            if not self.s["last_bar_at"]:
+                self.s["last_bar_at"] = self.clock()
             filled = self._resolve_armed()
             self._sync_trade(self.b.net_position(), filled)
             self._save()
@@ -188,11 +199,13 @@ class Engine:
 
     def on_bar(self, ev: dict) -> None:
         with self.lock:
+            self._candle_arrived()
             t = int(ev["t"])
             if t <= self.s["last_bar_t"]:
                 log.info("candle %s already handled, ignored", t)
                 return
             self.s["last_bar_t"] = t
+            self.s["backup_done"] = [c for c in self.s["backup_done"] if c["end"] > t + self._tf_ms()]
             now = self._now()
             self._roll_day(now)
             h, l = float(ev["h"]), float(ev["l"])
@@ -249,6 +262,92 @@ class Engine:
                                 f"today {self._today_pnl()}")
                 self.s["trade"] = None
                 self._save()
+            self._check_candles()
+
+    # ---------------------------------------------------------------- missing candles
+    def _tf_ms(self, tf: str | None = None) -> int:
+        tf = self.cfg.timeframe if tf is None else tf
+        return int(tf) * 60_000 if tf.isdigit() else 0
+
+    def _candle_arrived(self) -> None:
+        now = self.clock()
+        if self.s["gap_warned"]:
+            self.s["gap_warned"] = False
+            log.info("%sm candles are arriving again", self.cfg.timeframe)
+            self.n.send(f"✅ {self.cfg.timeframe}m candles from TradingView are arriving again, after "
+                        f"{(now - self.s['last_bar_at']) / 60:.0f} minutes without one")
+        self.s["last_bar_at"] = now
+
+    def _overdue(self) -> bool:
+        """The bot's own next candle is more than candle_grace_s late."""
+        tf = self._tf_ms()
+        return bool(tf and self.s["last_bar_at"]) and self.clock() - self.s["last_bar_at"] > tf / 1000 + self.cfg.candle_grace_s
+
+    def _check_candles(self) -> None:
+        if not (self.s["trade"] or self.s["armed"]) or not self._overdue():
+            return
+        self._backup_trail()
+        if not self.s["gap_warned"]:
+            self.s["gap_warned"] = True
+            tr = self.s["trade"]
+            what = f"the {tr['side']} trade's stop is stuck at {tr['stop']}" if tr else "an entry order is waiting"
+            mins = (self.clock() - self.s["last_bar_at"]) / 60
+            log.warning("no %sm candle for %.0f minutes and %s", self.cfg.timeframe, mins, what)
+            self.n.send(f"⚠️ No {self.cfg.timeframe}m candle from TradingView for {mins:.0f} minutes, and {what}. "
+                        f"Check the TradingView alert." +
+                        (f" Meanwhile the stop trails on the {self.cfg.backup_timeframe}m candles." if self.cfg.backup_timeframe else ""))
+            self._save()
+
+    def on_backup_bar(self, ev: dict) -> None:
+        """A candle from the backup alert. Candles smaller than the bot's own are grouped into one of the bot's size; a
+        group with a candle missing is dropped. Finished ones are kept for _backup_trail."""
+        with self.lock:
+            t = int(ev["t"])
+            if t <= self.s["backup_t"]:
+                return
+            self.s["backup_t"] = t
+            b = self._tf_ms(self.cfg.backup_timeframe)
+            size = max(b, self._tf_ms())
+            start = t - t % size
+            g = self.s["backup"]
+            if not g or g["start"] != start:
+                g = {"start": start, "h": float(ev["h"]), "l": float(ev["l"]), "n": 0}
+            g["h"], g["l"], g["n"] = max(g["h"], float(ev["h"])), min(g["l"], float(ev["l"])), g["n"] + 1
+            if ev.get("sph") is not None and ev.get("spl") is not None:
+                g.update(sptf=str(ev.get("sptf") or ""), sph=float(ev["sph"]), spl=float(ev["spl"]))
+            if t + b >= start + size:
+                if g["n"] == size // b:
+                    self.s["backup_done"] = (self.s["backup_done"] + [dict(g, end=start + size)])[-20:]
+                g = None
+            self.s["backup"] = g
+            self._save()
+
+    def _backup_trail(self) -> None:
+        """While the bot's own candles are missing: trail on the backup candles that finished after its last one."""
+        own_end = self.s["last_bar_t"] + self._tf_ms()
+        todo = [c for c in self.s["backup_done"] if c["end"] > own_end]
+        self.s["backup_done"] = []
+        if not todo:
+            return
+        self._save()
+        filled = self._resolve_armed()
+        self._sync_trade(self.b.net_position(), filled)
+        for c in todo:
+            tr = self.s["trade"]
+            if not tr:
+                return
+            if tr.get("sp"):
+                if c.get("sptf") != tr["sp"]:
+                    continue
+                h, l = c["sph"], c["spl"]
+            else:
+                h, l = c["h"], c["l"]
+            log.info("BACKUP TRAIL: no %sm candle since %s, using the %sm candles up to %s: H %s L %s", self.cfg.timeframe,
+                     datetime.fromtimestamp(own_end / 1000, self.tz).strftime("%H:%M"), self.cfg.backup_timeframe,
+                     datetime.fromtimestamp(c["end"] / 1000, self.tz).strftime("%H:%M"), c["h"], c["l"])
+            self._note_best(c["h"], c["l"])
+            self._trail(h, l)
+        self._save()
 
     # ---------------------------------------------------------------- steps
     def _resolve_armed(self) -> list[tuple[str, dict]]:

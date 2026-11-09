@@ -172,4 +172,9 @@ position stays protected. It only stops trailing until the bot is back (the hear
   Setups to Take with +FLIP, A+ Needs a Continuity FLIP, stop size, trading hours), all judged at the setup candle's
   close. The bot's own settings decide the window, size, daily limits and the flatten time. The bot always trails to the
   last closed candle (the indicator's Trail from entry); other Exit Styles only change what the chart draws.
+- Missing candles: the stop only moves when a candle message arrives. If none comes for one candle plus
+  `candle_grace_s` (60 s) while a trade is open or an entry waits, Discord gets one warning, and another when they come
+  back. For a backup, set `backup_timeframe` (for example "5" on a 1 or 15 minute bot) and keep a second alert on that
+  timeframe, same chart, same webhook. Its candles are used only while the bot's own are missing: smaller ones are
+  grouped into full candles of the bot's size, so the trail is the same as it would have been.
 - Tests: `python -m unittest discover -s tests -v`

@@ -26,6 +26,10 @@ account = ""              # the account id from tools/tradelocker_check.py, like
 symbol = "MNQZ6"          # the Tradovate contract. Change the month code at each quarterly roll (Z6 = Dec 2026, H7 = Mar 2027)
 tv_tickers = ["MNQ1!", "NQ1!"]   # the TradingView charts allowed to trade it (syminfo.ticker)
 timeframe = "5"           # the chart timeframe the alert runs on
+backup_timeframe = ""     # optional: a second alert on another timeframe (5 for a 1 or 15 minute bot). Its candles are used
+                          # only while the bot's own candles stop arriving, to keep trailing the stop. "" = off
+candle_grace_s = 60       # a candle counts as missing this many seconds after it should have closed: Discord gets a warning
+                          # while a trade is open, and the backup candles take over the trail
 tick_size = 0.25
 max_gap_pts = 0           # refuse an entry this many points or more from the broker's price (an alert on the wrong chart). 0 = off
 point_value = 2.0         # dollars per point: MNQ 2, NQ 20, MES 5, ES 50
