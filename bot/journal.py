@@ -40,7 +40,7 @@ HTF_STACK = {
 def parse_signal(sig: str) -> dict:
     """Splits the indicator's label, like 'Failed 2-2 Reversal A+ 1H LOW RECLAIM | 3 HIGHS +FLIP'."""
     name = next((n for n in sorted(SIGNALS, key=len, reverse=True) if sig.startswith(n)), "")
-    rest = sig[len(name):].strip()
+    rest = sig[len(name):].strip().removeprefix("(Hammer / Shooter)").strip()
     grade = "A+" if rest.startswith("A+") else "B" if rest.split(" ")[:1] == ["B"] else ""
     flip = " + Flip" if "+FLIP" in rest else ""
     base = "Reclaim" if "RECLAIM" in rest else "Expansion" if "EXPANSION" in rest else ""

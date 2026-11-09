@@ -1,0 +1,18 @@
+# The second bot: its own Tradovate demo account, settings in config-hs.toml (port 8081). Install:
+#   sudo cp deploy/strat-bot-hs.service deploy/strat-tunnel-hs.service /etc/systemd/system/
+#   sudo systemctl enable --now strat-bot-hs strat-tunnel-hs
+# Logs: bot_hs.log in the bot folder. Its webhook address: journalctl -u strat-tunnel-hs | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1
+[Unit]
+Description=TheStrat execution bot 2: 15m Hammer/Shooters, Success Protocol 4h (TradingView -> Tradovate)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+WorkingDirectory=/home/bot/thestrat-trading-bot
+ExecStart=/home/bot/thestrat-trading-bot/.venv/bin/python run_bot.py --config config-hs.toml
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

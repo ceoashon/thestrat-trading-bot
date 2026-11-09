@@ -26,6 +26,10 @@ class Config:
     cid: int = 0
     sec: str = ""
     account_name: str = ""
+    # which broker: "tradovate" or "tradelocker" (TradeLocker's demo side only, for CFDs such as GatesFX's NAS100.R)
+    broker: str = "tradovate"
+    tl_login_file: str = "tradelocker.toml"   # written by tools/tradelocker_login.sh, never committed
+    tl_account: str = ""                       # the TradeLocker account id, like 2604648
     # instrument
     symbol: str = "MNQZ6"
     tv_tickers: list[str] = field(default_factory=lambda: ["MNQ1!", "NQ1!"])
@@ -36,7 +40,9 @@ class Config:
     big_ratio: int = 10
     big_from: int = 20
     # orders
-    qty: int = 1
+    qty: float = 1
+    lot_step: float = 1        # the size step: 1 contract on futures, 0.01 lot on CFDs. Sizes round down to it
+    max_gap_pts: float = 0     # refuse an entry this many points or more from the broker's price (an alert on the wrong chart). 0 = off
     entry_offset_ticks: int = 1
     stop_buffer_ticks: int = 1
     entry_type: str = "Stop"
@@ -75,6 +81,7 @@ class Config:
     notify_armed: bool = True
     notify_cancels: bool = False
     notify_trail: bool = True
+    notify_name: str = ""     # put in front of every Discord message, to tell bots apart in one channel
     # trade journal
     journal_url: str = ""
     journal_key: str = ""
@@ -107,6 +114,9 @@ def load_config(path: str) -> Config:
         cid=int(os.environ.get("TRADOVATE_CID", tv.get("cid", d.cid))),
         sec=os.environ.get("TRADOVATE_SEC", tv.get("sec", d.sec)),
         account_name=tv.get("account_name", d.account_name),
+        broker=raw.get("broker", {}).get("name", d.broker),
+        tl_login_file=raw.get("tradelocker", {}).get("login_file", d.tl_login_file),
+        tl_account=str(raw.get("tradelocker", {}).get("account", d.tl_account)),
         symbol=ins.get("symbol", d.symbol),
         tv_tickers=list(ins.get("tv_tickers", d.tv_tickers)),
         timeframe=str(ins.get("timeframe", d.timeframe)),
@@ -115,7 +125,9 @@ def load_config(path: str) -> Config:
         big_symbol=ins.get("big_symbol", d.big_symbol),
         big_ratio=int(ins.get("big_ratio", d.big_ratio)),
         big_from=int(ins.get("big_from", d.big_from)),
-        qty=int(od.get("qty", d.qty)),
+        lot_step=float(od.get("lot_step", d.lot_step)),
+        qty=float(od.get("qty", d.qty)),
+        max_gap_pts=float(ins.get("max_gap_pts", d.max_gap_pts)),
         entry_offset_ticks=int(od.get("entry_offset_ticks", d.entry_offset_ticks)),
         stop_buffer_ticks=int(od.get("stop_buffer_ticks", d.stop_buffer_ticks)),
         entry_type=od.get("entry_type", d.entry_type),
@@ -124,7 +136,7 @@ def load_config(path: str) -> Config:
         direction=rk.get("direction", d.direction),
         both_sides=bool(rk.get("both_sides", d.both_sides)),
         risk_pct=float(rk.get("risk_pct", d.risk_pct)),
-        max_qty=int(rk.get("max_qty", d.max_qty)),
+        max_qty=float(rk.get("max_qty", d.max_qty)),
         setups=[int(x) for x in rk.get("setups", d.setups)],
         max_trades_per_day=int(rk.get("max_trades_per_day", d.max_trades_per_day)),
         max_daily_loss=float(rk.get("max_daily_loss", d.max_daily_loss)),
@@ -150,11 +162,16 @@ def load_config(path: str) -> Config:
         notify_armed=bool(nt.get("armed", d.notify_armed)),
         notify_cancels=bool(nt.get("cancels", d.notify_cancels)),
         notify_trail=bool(nt.get("trail", d.notify_trail)),
+        notify_name=str(nt.get("name", d.notify_name)),
         journal_url=jr.get("url", d.journal_url),
         journal_key=jr.get("key", d.journal_key),
         journal_token=os.environ.get("JOURNAL_TOKEN", jr.get("token", d.journal_token)),
         journal_spool=jr.get("spool", d.journal_spool),
     )
+    if c.lot_step == 1:                    # whole contracts stay whole numbers
+        c.qty, c.max_qty = int(c.qty), int(c.max_qty)
+    if c.broker not in ("tradovate", "tradelocker"):
+        raise ValueError("broker.name must be 'tradovate' or 'tradelocker'")
     if c.env not in ("demo", "live"):
         raise ValueError("tradovate.env must be 'demo' or 'live'")
     if c.direction not in ("both", "long", "short"):

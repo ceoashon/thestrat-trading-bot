@@ -1,0 +1,13 @@
+# Cloudflare quick tunnel for the second bot (port 8081). Its address changes when this service restarts.
+[Unit]
+Description=Cloudflare quick tunnel for strat bot 2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://localhost:8081
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

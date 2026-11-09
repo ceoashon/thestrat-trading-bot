@@ -44,17 +44,22 @@ def main() -> int:
         root.addHandler(h)
     log = logging.getLogger("bot")
 
-    notifier = Notifier(cfg.discord_webhook, cfg.heartbeat_url, prefix="[DRY RUN] " if cfg.dry_run else "")
+    prefix = ("[DRY RUN] " if cfg.dry_run else "") + (f"[{cfg.notify_name}] " if cfg.notify_name else "")
+    notifier = Notifier(cfg.discord_webhook, cfg.heartbeat_url, prefix=prefix)
     if cfg.dry_run:
         log.warning("DRY RUN: orders are only logged. Set dry_run = false in config.toml to send them to Tradovate.")
         broker = DryRunBroker()
     else:
-        from bot.tradovate import TradovateBroker
-        broker = TradovateBroker(cfg)
+        if cfg.broker == "tradelocker":
+            from bot.tradelocker import TradeLockerBroker
+            broker = TradeLockerBroker(cfg)
+        else:
+            from bot.tradovate import TradovateBroker
+            broker = TradovateBroker(cfg)
         try:
             broker.connect()
         except Exception as e:
-            notifier.send(f"❗ The bot could not connect to Tradovate: {e}")
+            notifier.send(f"❗ The bot could not connect to {cfg.broker.capitalize()}: {e}")
             time.sleep(5)  # give the message time to go out
             raise
         if cfg.env == "live":

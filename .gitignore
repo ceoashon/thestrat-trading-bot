@@ -248,3 +248,4 @@ journal_queue.jsonl*
 pnl_history.jsonl
 bot.log*
 .last_test_bar
+tradelocker.toml

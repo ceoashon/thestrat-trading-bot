@@ -582,3 +582,48 @@ class EngineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SuccessProtocolTest(unittest.TestCase):
+    """With the indicator's Success Protocol on, the message carries the higher timeframe's last finished candle and the
+    trade trails on it instead of the chart candles."""
+    setUp, bar, armed = EngineTest.setUp, EngineTest.bar, EngineTest.armed
+
+    def spbar(self, h_, m_, hi, lo, sph=None, spl=None, L=0, tf="240"):
+        t = ms(h_, m_)
+        self.now = (t + TF) / 1000 + 1
+        ev = {"ev": "bar", "sym": "MNQ1!", "tf": "5", "t": t, "tc": t + TF, "h": hi, "l": lo, "L": L, "S": 0, "sptf": tf, "spn": 1}
+        if sph is not None:
+            ev.update(sph=sph, spl=spl)
+        self.e.handle(ev)
+
+    def test_trails_the_higher_timeframe_not_the_chart(self):
+        self.spbar(10, 0, 28402.0, 28380.0, sph=28450.0, spl=28300.0, L=3)
+        self.assertEqual(self.armed("long")["sp"], "240")
+        self.b.fill("long")
+        # the chart candle's low (28395) would move the stop; the 4h candle's low (28300) is under the stop, so it stays
+        self.spbar(10, 5, 28440.0, 28395.0, sph=28450.0, spl=28300.0)
+        tr = self.e.s["trade"]
+        self.assertEqual((tr["sp"], tr["stop"]), ("240", 28379.75))
+        # a new 4h candle finished with its low at 28410: the stop moves to 1 tick under it
+        self.spbar(10, 10, 28480.0, 28430.0, sph=28470.0, spl=28410.0)
+        self.assertEqual(tr["stop"], 28409.75)
+        # chart candles alone never move it
+        self.spbar(10, 15, 28560.0, 28470.0, sph=28470.0, spl=28410.0)
+        self.assertEqual(self.e.s["trade"]["stop"], 28409.75)
+
+    def test_no_levels_yet_leaves_the_stop(self):
+        self.spbar(10, 0, 28402.0, 28380.0, L=3)
+        self.b.fill("long")
+        self.spbar(10, 5, 28440.0, 28395.0)
+        self.assertEqual(self.e.s["trade"]["stop"], 28379.75)
+
+    def test_without_it_the_chart_trail_is_unchanged(self):
+        self.bar(10, 0, 28402.0, 28380.0, L=3)
+        self.b.fill("long")
+        self.bar(10, 5, 28440.0, 28395.0)
+        self.assertEqual((self.e.s["trade"]["sp"], self.e.s["trade"]["stop"]), ("", 28394.75))
+
+    def test_the_armed_message_says_so(self):
+        self.spbar(10, 0, 28402.0, 28380.0, sph=28450.0, spl=28300.0, L=3)
+        self.assertIn("trails the 240 candles (Success Protocol)", "\n".join(self.n.msgs))

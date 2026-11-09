@@ -12,11 +12,22 @@ app_id = "StratBot"
 app_version = "1.0"
 account_name = ""         # blank = the first account on the login (for example DEMO123456)
 
+[broker]
+name = "tradovate"        # "tradovate", or "tradelocker" for a TradeLocker demo account (CFDs, for example GatesFX's NAS100.R)
+
+[tradelocker]             # only with broker name "tradelocker". Demo side only
+login_file = "tradelocker.toml"   # email, password and server, written by tools/tradelocker_login.sh. Never committed
+account = ""              # the account id from tools/tradelocker_check.py, like 2604648
+# On a CFD: symbol = "NAS100.R", tick_size = 0.01, point_value = 100 (dollars a point for 1 lot), lot_step = 0.01,
+# max_qty = 10, and the ticks below in 0.01 steps: entry_offset_ticks = 25 and stop_buffer_ticks = 25 are 0.25 points.
+# The alert must be on a chart of the same CFD (not NQ1!, about 100 points away); max_gap_pts catches a wrong chart.
+
 [instrument]
 symbol = "MNQZ6"          # the Tradovate contract. Change the month code at each quarterly roll (Z6 = Dec 2026, H7 = Mar 2027)
 tv_tickers = ["MNQ1!", "NQ1!"]   # the TradingView charts allowed to trade it (syminfo.ticker)
 timeframe = "5"           # the chart timeframe the alert runs on
 tick_size = 0.25
+max_gap_pts = 0           # refuse an entry this many points or more from the broker's price (an alert on the wrong chart). 0 = off
 point_value = 2.0         # dollars per point: MNQ 2, NQ 20, MES 5, ES 50
 big_symbol = ""           # the full-size contract, for example NQZ6. When risk_pct sizes a trade at big_from contracts or more, it trades this instead, for lower fees. Blank = off. Change its month code at each roll too
 big_ratio = 10            # how many of symbol equal one big_symbol: 10 MNQ = 1 NQ. Always rounded down, so the risk never goes over risk_pct
@@ -24,6 +35,7 @@ big_from = 20             # the contract count where it switches to big_symbol
 
 [orders]
 qty = 1                   # contracts per trade. Not used when risk_pct is on
+lot_step = 1              # sizes round down to this: 1 contract on futures, 0.01 lot on CFDs
 entry_offset_ticks = 1    # buy stop = setup candle high + 1 tick, sell stop = setup low - 1 tick (the first trade through)
 stop_buffer_ticks = 1     # stop and every trail step = 1 tick beyond the candle's low (long) or high (short)
 entry_type = "Stop"       # "Stop" fills at market on the break. "StopLimit" caps slippage at stop_limit_ticks but can miss fast breaks
@@ -65,6 +77,7 @@ heartbeat_url = ""        # optional: a healthchecks.io ping URL. It alerts you 
 armed = true              # message when a setup is armed (the stop entry is placed)
 cancels = false           # message when an entry is canceled (no break, or the other side broke first). Busy, off by default
 trail = true              # message at every stop move
+name = ""                 # optional: shown in front of every message, like "H/S 4h", when two bots share one channel
 # Always sent: bot start, fills, closed trades with P&L, flatten time, skipped setups (limits, late alerts), errors.
 
 [journal]                 # optional: logs every finished trade to a Strat Trading Journal journal. Blank token = off

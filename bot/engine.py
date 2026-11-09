@@ -4,7 +4,8 @@ At every candle close (a "bar" message from the indicator):
   1. Entries armed on the last candle that did not fill are canceled (the trigger candle closed without the break).
   2. The position is checked. A filled entry becomes the open trade.
   3. In a trade: the stop moves to this candle's low minus the buffer (long) or high plus the buffer (short), only in
-     the trade's favor.
+     the trade's favor. With the indicator's Success Protocol on (Trail from entry), the message also carries that
+     timeframe's last finished candle (sptf, sph, spl), and a trade armed with it trails on that candle instead.
   4. Flat: every setup the indicator armed gets a stop entry at the break (setup high + offset for a long, low - offset
      for a short) with its protective stop at the other side of the setup candle (OSO, so the stop exists the moment
      the entry fills).
@@ -103,7 +104,13 @@ class Engine:
             return False
         return fa <= t < r if fa < r else (t >= fa or t < r)
 
-    def _usd(self, pts: float, qty: int, symbol: str) -> str:
+    def _lots(self, x: float):
+        """x rounded down to the size step: whole contracts on futures, 0.01 lots on CFDs."""
+        step = self.cfg.lot_step
+        n = int(x / step + 1e-9)
+        return n if step == 1 else round(n * step, 8)
+
+    def _usd(self, pts: float, qty: float, symbol: str) -> str:
         v = pts * self.cfg.value_of(symbol) * qty
         return f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
 
@@ -196,7 +203,12 @@ class Engine:
             self._sync_trade(pos, filled)
             if self.s["trade"]:
                 self._note_best(h, l)
-                self._trail(h, l)
+                if self.s["trade"].get("sp"):
+                    # Success Protocol: the higher timeframe's last finished candle, as the indicator's trail line uses it
+                    if ev.get("sph") is not None and ev.get("spl") is not None:
+                        self._trail(float(ev["sph"]), float(ev["spl"]))
+                else:
+                    self._trail(h, l)
             elif pos == 0:
                 self._arm(ev, now, h, l)
             self._save()
@@ -253,7 +265,7 @@ class Engine:
                             self.n.send(f"✖️ {side.capitalize()} entry {a['entry']} did not trigger, canceled")
                         continue
                     # part of it filled before the cancel: that part is the trade, and it keeps its stop
-                    log.warning("%s entry %s filled only %d of %s", side, a["entry"], got, a.get("qty"))
+                    log.warning("%s entry %s filled only %s of %s", side, a["entry"], got, a.get("qty"))
                     a["qty"] = got
                     st = "Filled"
                 else:
@@ -284,6 +296,7 @@ class Engine:
                     tr["symbol"] = a.get("symbol", self.cfg.symbol)
                     tr["first_stop"] = a["stop"]
                     tr["late"] = a.get("late", False)
+                    tr["sp"] = a.get("sp", "")
                     log.info("IN TRADE %s from %s, stop %s", side, tr["entry"], tr["stop"])
             if filled and want == 0:
                 log.info("the entry filled and the stop was hit inside the same candle")
@@ -298,7 +311,7 @@ class Engine:
                              tr.get("qty", self.cfg.qty), tr.get("symbol", self.cfg.symbol))
                 self._journal_close(tr, tr["side"], self.b.fill_price(tr["stop_id"]) or tr["stop"], tr["stop_id"], "stop hit")
                 tr = None
-            elif want != _dir(tr["side"]) or abs(pos) > tr.get("qty", self.cfg.qty):
+            elif want != _dir(tr["side"]) or abs(pos) > tr.get("qty", self.cfg.qty) + 1e-9:
                 log.error("the position (%s) does not match the %s trade: flattening", pos, tr["side"])
                 self._flat_all()
                 self._journal_flat(tr, "the position did not match the trade, so the bot closed it")
@@ -382,6 +395,8 @@ class Engine:
             if not why.startswith(("outside the trading window", "after the flatten time")):
                 self.n.send(f"⏸️ {'/'.join(sides).capitalize()} setup not taken: {why}")
             return
+        if ev.get("sptf") and int(ev.get("spn") or 1) > 1:
+            log.warning("the indicator has 2 Success Protocol timeframes on: the bot trails the whole trade on the first, %s", ev["sptf"])
         if len(sides) == 2 and not self.cfg.both_sides:
             rk = lambda s: RANK.index(sigs[s]) if sigs[s] in RANK else 99
             sides = [min(sides, key=rk)]
@@ -405,7 +420,7 @@ class Engine:
                 log.error("%s entry at %s not placed: %s", side, entry, e)
                 self.n.send(f"⚠️ {side.capitalize()} entry at {entry} was not placed: {e}")
                 continue
-            if qty < 1:
+            if qty < self.cfg.lot_step:
                 log.info("%s setup skipped: one contract risks more than %s%% of the account", side, self.cfg.risk_pct)
                 self.n.send(f"⏸️ {side.capitalize()} {name} not taken: one contract would risk "
                             f"{self._usd(abs(entry - stop), 1, self.cfg.symbol)}, more than {self.cfg.risk_pct}% of the account")
@@ -424,14 +439,16 @@ class Engine:
                 self.n.send(f"⚠️ {side.capitalize()} entry at {entry} was not placed: {e}")
                 continue
             self.s["armed"][side] = {"entry_id": eid, "stop_id": sid, "entry": entry, "stop": stop,
-                                     "setup_t": int(ev["t"]), "sig": name, "qty": qty, "late": late, "symbol": symbol}
+                                     "setup_t": int(ev["t"]), "sig": name, "qty": qty, "late": late, "symbol": symbol,
+                                     "sp": str(ev.get("sptf") or "")}
             if late:
                 continue
             log.info("ARMED %s %s: %s stop at %s, protective stop %s (%d ticks risk)", side.upper(), name,
                      "buy" if d == 1 else "sell", entry, stop, risk_ticks)
             if self.cfg.notify_armed:
                 self.n.send(f"📌 **ARMED {side.upper()}** {symbol} x{qty} | {name} | {'buy' if d == 1 else 'sell'} stop {entry} | "
-                            f"stop loss {stop} ({risk_ticks} ticks, risk {self._usd(-abs(entry - stop), qty, symbol)})")
+                            f"stop loss {stop} ({risk_ticks} ticks, risk {self._usd(-abs(entry - stop), qty, symbol)})"
+                            + (f" | trails the {ev['sptf']} candles (Success Protocol)" if ev.get("sptf") else ""))
 
     def _contracts(self, risk_pts: float) -> tuple[str, int]:
         """The contract and how many for a trade. With risk_pct on: the most that risk no more than that percent of the
@@ -439,10 +456,10 @@ class Engine:
         c = self.cfg
         if c.risk_pct <= 0:
             return c.symbol, c.qty
-        qty = int(self.b.account_balance() * c.risk_pct / 100 / (risk_pts * c.point_value))
+        qty = self._lots(self.b.account_balance() * c.risk_pct / 100 / (risk_pts * c.point_value))
         symbol = c.symbol
         if c.big_symbol and qty >= c.big_from:
-            symbol, qty = c.big_symbol, qty // c.big_ratio
+            symbol, qty = c.big_symbol, int(qty // c.big_ratio)
         return symbol, min(qty, c.max_qty) if c.max_qty else qty
 
     def _enter_late(self, side: str, entry: float, stop: float, name: str, why: Exception) -> tuple[int, int, int, str] | None:
@@ -455,7 +472,7 @@ class Engine:
         limit = self._px(entry + _dir(side) * cap * self.cfg.tick_size)
         try:
             symbol, qty = self._contracts(abs(limit - stop))
-            ids = self.b.place_late_entry(side, qty, limit, stop, symbol) if qty >= 1 else None
+            ids = self.b.place_late_entry(side, qty, limit, stop, symbol) if qty >= self.cfg.lot_step else None
         except BrokerError as e:
             log.error("%s late entry at %s failed: %s", side, limit, e)
             self.n.send(f"⚠️ {side.capitalize()} late entry at {limit} failed: {e}")

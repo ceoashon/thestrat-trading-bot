@@ -2893,6 +2893,13 @@ if botOn and barstate.isrealtime and barstate.isconfirmed
     botCxS := false
     string botLn = botArmL ? sigName(pvL) + " " + pvGradeL + (botKL != "" ? " " + botKL : "") : ""
     string botSn = botArmS ? sigName(pvS) + " " + pvGradeS + (botKS != "" ? " " + botKS : "") : ""
-    alert(botHead("bar") + ",\"t\":" + str.tostring(time) + ",\"tc\":" + str.tostring(time + chartMs) + ",\"o\":" + str.tostring(open) + ",\"h\":" + str.tostring(high) + ",\"l\":" + str.tostring(low) + ",\"c\":" + str.tostring(close) + ",\"L\":" + str.tostring(botArmL ? pvL : 0) + ",\"S\":" + str.tostring(botArmS ? pvS : 0) + ",\"Ln\":\"" + botLn + "\",\"Sn\":\"" + botSn + "\"}", alert.freq_all)
+    // Success Protocol with Trail from entry: its timeframe and that timeframe's last finished candle, the same levels its
+    // trail line uses. The bot then trails the trade on these instead of the chart candles. Not sent when it is off.
+    string botSp = ""
+    if trailFromEntry and spN > 0
+        float botSpl = sp1Ok ? sp1Lo : sp2Lo
+        float botSph = sp1Ok ? sp1Hi : sp2Hi
+        botSp := ",\"sptf\":\"" + (sp1Ok ? spTf1 : spTf2) + "\",\"spn\":" + str.tostring(spN) + (na(botSpl) or na(botSph) ? "" : ",\"spl\":" + str.tostring(botSpl) + ",\"sph\":" + str.tostring(botSph))
+    alert(botHead("bar") + ",\"t\":" + str.tostring(time) + ",\"tc\":" + str.tostring(time + chartMs) + ",\"o\":" + str.tostring(open) + ",\"h\":" + str.tostring(high) + ",\"l\":" + str.tostring(low) + ",\"c\":" + str.tostring(close) + ",\"L\":" + str.tostring(botArmL ? pvL : 0) + ",\"S\":" + str.tostring(botArmS ? pvS : 0) + ",\"Ln\":\"" + botLn + "\",\"Sn\":\"" + botSn + "\"" + botSp + "}", alert.freq_all)
 
 // ===== END OF SCRIPT =====
